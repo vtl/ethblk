@@ -1,0 +1,24 @@
+#!/bin/bash
+
+nic=enp1s0
+ini=1  # should be 1 on initiator and 0 on target
+tgt=0  # should be 1 on target and 0 on initiator
+tgt_ip=192.168.51.1
+tgt_disk=/dev/nvme0n1
+ini_ip=192.168.51.51
+ini_mac=50:6b:4b:cc:f3:e6
+
+sudo rmmod ethblk
+sudo insmod ethblk.ko initiator=$ini target=$tgt disk_major=154
+
+if [[ $ini -eq 1 ]]; then
+    sudo ifconfig $nic:1 $ini_ip mtu 9000
+    echo 0 | sudo tee /sys/kernel/ethblk/initiator/create_disk
+    echo $tgt_ip $nic | sudo tee /sys/kernel/ethblk/initiator/eda0/targets/add
+fi
+
+if [[ $tgt -eq 1 ]]; then
+    sudo ifconfig $nic:1 $tgt_ip mtu 9000
+    echo 0 $tgt_disk | sudo tee /sys/kernel/ethblk/target/create_disk
+    echo $ini_mac $nic | sudo tee /sys/kernel/ethblk/target/eda0/initiators/add
+fi
