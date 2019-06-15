@@ -1,11 +1,13 @@
-KVER := `uname -r`
+TARGET := ethblk
+KERNEL := /lib/modules/$(shell uname -r)/build
 
 ccflags-y += -g3 -O3
-obj-m += ethblk.o
-ethblk-y := main.o target.o initiator.o network.o worker.o
+
+obj-m += $(TARGET).o
+$(TARGET)-y := main.o target.o initiator.o network.o worker.o
 
 all:
-	make -C /lib/modules/${KVER}/build M=`pwd` modules
+	make -C $(KERNEL) M=$(PWD) modules
 
 clean:
-	make -C /lib/modules/${KVER}/build M=`pwd` clean
+	make -C $(KERNEL) M=$(PWD) clean
