@@ -33,7 +33,7 @@ ethblk_worker_create_pool(const char *name, kthread_work_func_t fn,
 		dprintk(err, "can't alloc worker pool '%s'\n", name);
 		goto out;
 	}
-	strncpy(p->name, name, sizeof(p->name));
+	strncpy(p->name, name, sizeof(p->name) - 1);
 
 	cpumask_copy(&p->cpumask, cpumask);
 

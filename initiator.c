@@ -147,7 +147,7 @@ ethblk_initiator_cmd_dump_to_string(struct ethblk_initiator_cmd *cmd, char *ptr,
 		       cmd->id, cmd, req, cmd->t, cmd->hctx_idx, cmd->gen_id,
 		       cmd->retries, cmd->d->name, req_op(req), req_name);
 	if (has_lba) {
-		snprintf(ptr + ret, n - ret, " lba %ld len %u", blk_rq_pos(req),
+		snprintf(ptr + ret, n - ret, " lba %llu len %u", blk_rq_pos(req),
 			 blk_rq_bytes(req));
 	}
 }
@@ -507,6 +507,8 @@ static ssize_t ethblk_initiator_disk_stat_store(struct kobject *kobj,
 		break;
 	case 2:
 		d->lat_stat_enabled = param[1];
+		d->net_stat_enabled = param[0];
+		break;
 	case 1:
 		d->net_stat_enabled = param[0];
 		break;
@@ -631,6 +633,8 @@ static ssize_t ethblk_initiator_disk_tgt_stat_store(struct kobject *kobj,
 		break;
 	case 2:
 		t->lat_stat_enabled = param[1];
+		t->net_stat_enabled = param[0];
+		break;
 	case 1:
 		t->net_stat_enabled = param[0];
 		break;
@@ -1140,7 +1144,7 @@ ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd, bool last)
 	if (blk_rq_bytes(req) > cmd->d->max_payload) {
 		dprintk_ratelimit(
 			err,
-			"disk %s cmd[%d] req %p req_op %d lba %lu len %u "
+			"disk %s cmd[%d] req %p req_op %d lba %llu len %u "
 			"retries %d requested > max payload (%d)\n",
 			cmd->d->name, cmd->id, req, req_op(req),
 			blk_rq_pos(req), blk_rq_bytes(req), cmd->retries,
@@ -1244,12 +1248,12 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 
 	if (cmd->retries)
 		dprintk(info,
-			"cmd[%d] req %p req_op %d lba %lu len %u retries %d\n",
+			"cmd[%d] req %p req_op %d lba %llu len %u retries %d\n",
 			cmd->id, bd->rq, req_op(bd->rq), blk_rq_pos(bd->rq),
 			blk_rq_bytes(bd->rq), cmd->retries);
 	else
 		dprintk(debug,
-			"cmd[%d] req %p req_op %d lba %lu len %u retries %d\n",
+			"cmd[%d] req %p req_op %d lba %llu len %u retries %d\n",
 			cmd->id, bd->rq, req_op(bd->rq), blk_rq_pos(bd->rq),
 			blk_rq_bytes(bd->rq), cmd->retries);
 	cmd->retries = 0;
