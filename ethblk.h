@@ -30,14 +30,14 @@ extern char *log_buf;
 extern bool target_mode;
 extern bool initiator_mode;
 
-#define dprintk(level, fmt, arg...)                                            \
-	do {                                                                   \
-		int pid, cpu;                                                  \
-		pid = task_pid_nr(current);                                    \
-		cpu = smp_processor_id();                                      \
-		pr_##level(                                                    \
-			"%s[%s pid:%d cpu:%d] " fmt,                      \
-			__func__, current->comm, pid, cpu, ##arg);             \
+#define dprintk(level, fmt, arg...)					\
+	do {								\
+		int __pid, __cpu;					\
+		__pid = task_pid_nr(current);				\
+		__cpu = smp_processor_id();				\
+		pr_##level(						\
+			"%s[%s pid:%d cpu:%d] " fmt,			\
+			__func__, current->comm, __pid, __cpu, ##arg);	\
 	} while (0)
 
 #define dprintk_ratelimit(level, fmt, arg...)                                  \
