@@ -159,18 +159,15 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	struct ethblk_hdr *rep_hdr;
 	int ret = NET_RX_DROP;
 
+	skb = skb_share_check(skb, GFP_ATOMIC);
+	if (skb == NULL)
+		goto exit;
+
 	if (!ethblk_network_skb_is_mine(skb))
 		goto exit;
 
 	/* don't process in net/core/ipv4 */
 	skb->pkt_type = PACKET_OTHERHOST;
-
-	skb = skb_share_check(skb, GFP_ATOMIC);
-	if (skb == NULL) {
-		dprintk(debug, "iface %s skb %p can't share skb\n", ifp->name,
-			skb);
-		goto exit;
-	}
 
 	if (skb_linearize(skb)) {
 		dprintk_ratelimit(debug, "drop non-linearized skb %p\n", skb);
