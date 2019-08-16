@@ -987,7 +987,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
 	bio->bi_bdev = d->bd;
 #else
-	bio->bi_disk = d->bd->bd_disk;
+	bio_set_dev(bio, d->bd);
 #endif
 	bio_set_op_attrs(bio, write ? REQ_OP_WRITE : REQ_OP_READ,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
