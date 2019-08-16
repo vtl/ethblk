@@ -1090,6 +1090,10 @@ void ethblk_target_cmd_deferred(struct sk_buff *skb)
 {
 	struct ethblk_target_cmd *cmd;
 
+	if (!target_running) {
+		consume_skb(skb);
+		return;
+	}
 	cmd = kmem_cache_zalloc(ethblk_target_cmd_cache, GFP_ATOMIC);
 	if (!cmd) {
 		dprintk_ratelimit(debug, "can't allocate cmd\n");
@@ -1209,10 +1213,13 @@ out:
 	return d;
 }
 
-static void ethblk_target_start_workers(void)
+static int ethblk_target_start_workers(void)
 {
-	workers = ethblk_worker_create_pool(
+	int ret;
+
+	ret = ethblk_worker_create_pool(&workers,
 		"ethblk-tgt", ethblk_target_cmd_worker, cpu_online_mask);
+	return ret;
 }
 
 static void ethblk_target_stop_workers(void)
@@ -1241,7 +1248,11 @@ int __init ethblk_target_start(struct kobject *parent)
 {
 	int ret;
 
-	ethblk_target_start_workers();
+	ret = ethblk_target_start_workers();
+	if (ret) {
+		dprintk(err, "can't starts workers: %d\n", ret);
+		goto out;
+	}
 
 	INIT_LIST_HEAD(&ethblk_target_disks);
 
