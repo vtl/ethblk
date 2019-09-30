@@ -1444,7 +1444,7 @@ ethblk_initiator_disk_set_max_payload(struct ethblk_initiator_disk *d,
 
 	dprintk(info,
 		"disk %s set max payload %d (aligned %d) "
-		"max_possble_payload %d\n",
+		"max_possible_payload %d\n",
 		d->name, _max_payload, max_payload, max_possible_payload);
 
 	if (d->max_possible_payload < max_payload) {
