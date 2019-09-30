@@ -18,10 +18,11 @@ int ethblk_network_route_l3(struct net_device *nd, __be32 daddr, __be32 saddr,
 {
 	struct rtable *rt = NULL;
 	struct neighbour *neigh = NULL;
+	int ret = -ENOENT;
 
 	rt = ip_route_output(&init_net, daddr, saddr, 0, 0);
 	if (IS_ERR(rt))
-		return -ENOENT;
+		goto out;
 
 	neigh = dst_neigh_lookup(&rt->dst, &daddr);
 
@@ -29,6 +30,7 @@ int ethblk_network_route_l3(struct net_device *nd, __be32 daddr, __be32 saddr,
 		rcu_read_lock();
 		if (neigh->nud_state & NUD_VALID) {
 			ether_addr_copy(mac, neigh->ha);
+			ret = 0;
 		} else {
 			neigh_event_send(neigh, NULL);
 		}
@@ -37,8 +39,8 @@ int ethblk_network_route_l3(struct net_device *nd, __be32 daddr, __be32 saddr,
 	}
 
 	ip_rt_put(rt);
-
-	return 0;
+out:
+	return ret;
 }
 
 __be32 ethblk_network_if_get_saddr(struct net_device *nd)
@@ -132,6 +134,7 @@ int ethblk_network_xmit_skb(struct sk_buff *skb)
 		dprintk(err, "skb %p dev is NULL\n", skb);
 	}
 	name = ifp ? ifp->name : "netif";
+	dprintk(debug, "skb %p dev %s\n", skb, name);
 	ret = dev_queue_xmit(skb);
 	if (ret != NET_XMIT_SUCCESS && net_ratelimit()) {
 		switch (ret) {
