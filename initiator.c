@@ -1012,48 +1012,43 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 	struct ethblk_initiator_tgt *t;
 	int hdr_size = sizeof(struct ethblk_hdr);
 
-	skb = skb_clone(cmd->skb, GFP_ATOMIC);
-	if (!skb) {
-		return BLK_STS_RESOURCE;
-	}
+	t = ethblk_initiator_disk_cmd_get_next_tgt(cmd);
+	if (!t)
+		return BLK_STS_NEXUS;
 
-	DEBUG_INI_CMD(debug, cmd, "skb = %p", skb);
-
+	cmd->t = t; /* this is just for hdr_init */
+	cmd->l3 = t->l3;
+	skb = cmd->skb;
 	skb->truesize -= skb->data_len;
 	skb_shinfo(skb)->nr_frags = skb->data_len = 0;
 	skb_trim(skb, 0);
+	DEBUG_INI_CMD(debug, cmd, "skb = %p", skb);
 
-	t = ethblk_initiator_disk_cmd_get_next_tgt(cmd);
-	if (!t) {
-		consume_skb(skb);
-		return BLK_STS_RESOURCE;
-	}
-	cmd->l3 = t->l3;
 	ethblk_initiator_cmd_fill_skb_headers(cmd, skb);
-
-	h = ethblk_network_skb_get_hdr(skb);
-	memset(h, 0, hdr_size);
 	skb_put(skb, hdr_size);
 
-	h->op = cmd->ethblk_hdr.op;
-	h->lba = cmd->ethblk_hdr.lba;
-	h->num_sectors = cmd->ethblk_hdr.num_sectors;
+	h = ethblk_network_skb_get_hdr(skb);
 
 	cmd->gen_id++;
-	cmd->t = t; /* this is just for hdr_init */
 	ethblk_initiator_cmd_hdr_init(cmd);
 	memcpy(h, &cmd->ethblk_hdr, sizeof(struct ethblk_hdr));
+
 	skb->dev = t->nd;
 
 	ethblk_initiator_cmd_finalize_skb_headers(cmd, skb);
 	cmd->t = NULL;
+
+	skb = skb_clone(cmd->skb, GFP_ATOMIC);
+	if (!skb) {
+		ethblk_initiator_put_tgt(t);
+		return BLK_STS_RESOURCE;
+	}
 
 	if (ethblk_network_xmit_skb(skb) == NET_XMIT_DROP) {
 		NET_STAT_INC(t, cnt.tx_dropped);
 	} else {
 		NET_STAT_INC(t, cnt.tx_count);
 	}
-	ethblk_initiator_put_tgt(t);
 
 	return BLK_STS_OK;
 }
