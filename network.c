@@ -166,16 +166,23 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	if (skb == NULL)
 		goto exit;
 
+#ifndef ETHBLK_NETWORK_LINEARIZE_SKB
+	if (!pskb_may_pull(skb, sizeof(struct ethblk_hdr) - ETH_HLEN))
+		goto exit;
+#endif
+
 	if (!ethblk_network_skb_is_mine(skb))
 		goto exit;
 
 	/* don't process in net/core/ipv4 */
 	skb->pkt_type = PACKET_OTHERHOST;
 
+#ifdef ETHBLK_NETWORK_LINEARIZE_SKB
 	if (skb_linearize(skb)) {
 		dprintk_ratelimit(debug, "drop non-linearized skb %p\n", skb);
 		goto exit;
 	}
+#endif
 
 	skb_push(skb, ETH_HLEN);
 

@@ -19,6 +19,9 @@
 #include <linux/udp.h>
 #include <net/ip.h>
 
+/* Defragment skb. Uncomment if kernel panics in ethblk_network_recv */
+//#define ETHBLK_NETWORK_LINEARIZE_SKB
+
 #define VERSION "0.1"
 
 extern int net_stat;
