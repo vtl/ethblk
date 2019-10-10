@@ -1037,11 +1037,7 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 	ethblk_initiator_cmd_finalize_skb_headers(cmd, skb);
 	cmd->t = NULL;
 
-	skb = skb_clone(cmd->skb, GFP_ATOMIC);
-	if (!skb) {
-		ethblk_initiator_put_tgt(t);
-		return BLK_STS_RESOURCE;
-	}
+	skb = skb_get(cmd->skb);
 
 	if (ethblk_network_xmit_skb(skb) == NET_XMIT_DROP) {
 		NET_STAT_INC(t, cnt.tx_dropped);
@@ -1204,11 +1200,7 @@ ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd, bool last)
 
 	ethblk_initiator_cmd_finalize_skb_headers(cmd, skb);
 
-	skb = skb_clone(skb, GFP_ATOMIC);
-	if (!skb) {
-		status = BLK_STS_RESOURCE;
-		goto out_err;
-	}
+	skb = skb_get(skb);
 
 	if (ethblk_network_xmit_skb(skb) == NET_XMIT_DROP) {
 		NET_STAT_INC(cmd->t, cnt.tx_dropped);
