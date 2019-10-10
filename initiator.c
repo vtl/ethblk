@@ -941,10 +941,9 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		ip->frag_off = htons(IP_DF);
 		ip->id = 0;
 		/* NOTE to fool Mellanox packet steering we have to
-		 * use semi-random source ports */
+		 * use semi-random source/dest ports */
 		// FIXME make tunable
-		udp->source = htons(eth_p_type + cmd->hctx_idx);
-		udp->dest = htons(eth_p_type);// + cmd->hctx_idx);
+		udp->dest = udp->source = htons(eth_p_type + cmd->hctx_idx);
 	} else {
 		skb->protocol = htons(eth_p_type);
 	}
