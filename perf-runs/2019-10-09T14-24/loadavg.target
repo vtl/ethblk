@@ -1,3 +1,37 @@
+$ cat /proc/loadavg; sudo ~/src/fio/fio --thread --direct=1 --rw=randread --ioengine=io_uring --fixedbufs --bs=4k --iodepth=128 --numjobs=16 --name=foo --time_based --runtime=300 --group_reporting --filename=/dev/mapper/vg_nvme-bar; cat /proc/loadavg 
+46.31 32.56 19.43 2/829 4550
+foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128
+...
+fio-3.14-6-g97134
+Starting 16 threads
+Jobs: 16 (f=16): [r(16)][100.0%][r=10.9GiB/s][r=2856k IOPS][eta 00m:00s]
+foo: (groupid=0, jobs=16): err= 0: pid=4586: Thu Oct 10 01:41:28 2019
+  read: IOPS=2839k, BW=10.8GiB/s (11.6GB/s)(3249GiB/300002msec)
+    slat (usec): min=2, max=1462, avg= 4.29, stdev= 2.57
+    clat (usec): min=13, max=7133, avg=716.02, stdev=53.27
+     lat (usec): min=18, max=7139, avg=720.49, stdev=53.55
+    clat percentiles (usec):
+     |  1.00th=[  644],  5.00th=[  660], 10.00th=[  668], 20.00th=[  676],
+     | 30.00th=[  685], 40.00th=[  693], 50.00th=[  701], 60.00th=[  709],
+     | 70.00th=[  725], 80.00th=[  750], 90.00th=[  799], 95.00th=[  816],
+     | 99.00th=[  857], 99.50th=[  873], 99.90th=[ 1139], 99.95th=[ 1237],
+     | 99.99th=[ 1450]
+   bw (  MiB/s): min= 9707, max=11766, per=99.99%, avg=11087.51, stdev=27.87, samples=9585
+   iops        : min=2485215, max=3012174, avg=2838400.73, stdev=7133.68, samples=9585
+  lat (usec)   : 20=0.01%, 50=0.01%, 100=0.01%, 250=0.01%, 500=0.01%
+  lat (usec)   : 750=80.50%, 1000=19.32%
+  lat (msec)   : 2=0.16%, 4=0.01%, 10=0.01%
+  cpu          : usr=30.01%, sys=69.58%, ctx=1811743, majf=0, minf=34344
+  IO depths    : 1=0.1%, 2=0.1%, 4=0.1%, 8=0.1%, 16=0.1%, 32=0.1%, >=64=100.0%
+     submit    : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.0%
+     complete  : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.1%
+     issued rwts: total=851616162,0,0,0 short=0,0,0,0 dropped=0,0,0,0
+     latency   : target=0, window=0, percentile=100.00%, depth=128
+
+Run status group 0 (all jobs):
+   READ: bw=10.8GiB/s (11.6GB/s), 10.8GiB/s-10.8GiB/s (11.6GB/s-11.6GB/s), io=3249GiB (3488GB), run=300002-300002msec
+15.09 21.76 18.39 1/771 4615
+
 $ cat /proc/loadavg; sudo ~/src/fio/fio --filename=/dev/nvme0n1:/dev/nvme1n1:/dev/nvme2n1:/dev/nvme3n1 --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=300 --group_reporting; cat /proc/loadavg
 2.47 10.63 7.57 2/670 1638
 foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128

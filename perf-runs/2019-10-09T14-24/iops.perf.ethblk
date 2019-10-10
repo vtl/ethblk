@@ -1,4 +1,4 @@
-[vitaly@gravicappa ethblk]$ sudo perf stat -ddd -- ~/src/fio/fio --filename=/dev/eda0 --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting
+$ sudo perf stat -ddd -- ~/src/fio/fio --filename=/dev/eda0 --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting
 foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128
 ...
 fio-3.14-6-g97134
