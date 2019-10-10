@@ -1254,7 +1254,7 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 			(unsigned long long)blk_rq_pos(bd->rq),
 			blk_rq_bytes(bd->rq), cmd->retries);
 	cmd->retries = 0;
-	cmd->time_queued = cmd->time_requeued = current_time = ktime_get_ns();
+	cmd->time_queued = cmd->time_requeued = current_time = jiffies;
 
 	blk_mq_start_request(bd->rq);
 
@@ -1324,13 +1324,13 @@ static void ethblk_initiator_blk_complete_request_locked(struct request *req)
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
 
-	cmd->time_completed = ktime_get_ns();
+	cmd->time_completed = jiffies;
 	ethblk_initiator_cmd_stat_account(cmd);
 	cmd->time_queued = 0; /* prepare for the next round */
 
 	DEBUG_INI_CMD(debug, cmd, "status %d", cmd->status);
 	cmd->retries = 0;
-	if (cmd->t) { /* ATA_ID cmd does not have target assigned */
+	if (cmd->t) {
 		if (cmd->status == BLK_STS_OK) {
 			struct ethblk_initiator_disk_tgt_context *tctx =
 				&cmd->t->ctx[cmd->hctx_idx];
@@ -1362,7 +1362,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 #else
 	enum blk_eh_timer_return status = BLK_EH_DONE;
 #endif
-	unsigned long current_time = ktime_get_ns();
+	unsigned long current_time = jiffies;
 
 	if (!spin_trylock(&cmd->lock)) {
 		return BLK_EH_RESET_TIMER;
@@ -1386,8 +1386,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 		goto out_unlock;
 	}
 
-	if ((current_time - cmd->time_queued) <
-	    jiffies_to_nsecs(HZ * CMD_TIMEOUT_S)) {
+	if ((current_time - cmd->time_queued) < (HZ * CMD_TIMEOUT_S)) {
 		struct ethblk_initiator_disk_tgt_context *tctx;
 
 		DEBUG_INI_CMD(debug, cmd, "rexmit");
