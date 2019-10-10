@@ -1,0 +1,58 @@
+[vitaly@gravicappa ethblk]$ sudo /usr/bin/time -v ~/src/fio/fio --filename=/dev/eda0 --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting
+foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128
+...
+fio-3.14-6-g97134
+Starting 16 processes
+Jobs: 16 (f=16): [r(16)][100.0%][r=6888MiB/s][r=1763k IOPS][eta 00m:00s]
+foo: (groupid=0, jobs=16): err= 0: pid=91793: Wed Oct  9 14:30:10 2019
+  read: IOPS=1736k, BW=6782MiB/s (7111MB/s)(397GiB/60001msec)
+    slat (nsec): min=1350, max=11201k, avg=6048.24, stdev=24779.02
+    clat (nsec): min=130, max=22722k, avg=1172453.37, stdev=731551.82
+     lat (usec): min=38, max=22725, avg=1178.67, stdev=735.25
+    clat percentiles (usec):
+     |  1.00th=[  515],  5.00th=[  676], 10.00th=[  725], 20.00th=[  783],
+     | 30.00th=[  832], 40.00th=[  881], 50.00th=[  947], 60.00th=[ 1029],
+     | 70.00th=[ 1172], 80.00th=[ 1418], 90.00th=[ 1811], 95.00th=[ 2311],
+     | 99.00th=[ 4293], 99.50th=[ 5342], 99.90th=[ 8094], 99.95th=[ 9241],
+     | 99.99th=[11994]
+   bw (  MiB/s): min= 4007, max= 9523, per=100.00%, avg=6781.63, stdev=61.35, samples=1910
+   iops        : min=1026006, max=2438116, avg=1736097.79, stdev=15704.42, samples=1910
+  lat (nsec)   : 250=0.01%
+  lat (usec)   : 4=0.01%, 10=0.01%, 20=0.01%, 50=0.01%, 100=0.02%
+  lat (usec)   : 250=0.15%, 500=0.72%, 750=13.29%, 1000=43.18%
+  lat (msec)   : 2=35.42%, 4=5.98%, 10=1.20%, 20=0.03%, 50=0.01%
+  cpu          : usr=10.87%, sys=70.88%, ctx=10365677, majf=0, minf=140
+  IO depths    : 1=0.1%, 2=0.1%, 4=0.1%, 8=0.1%, 16=0.1%, 32=0.1%, >=64=100.0%
+     submit    : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.0%
+     complete  : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.1%
+     issued rwts: total=104167915,0,0,0 short=0,0,0,0 dropped=0,0,0,0
+     latency   : target=0, window=0, percentile=100.00%, depth=128
+
+Run status group 0 (all jobs):
+   READ: bw=6782MiB/s (7111MB/s), 6782MiB/s-6782MiB/s (7111MB/s-7111MB/s), io=397GiB (427GB), run=60001-60001msec
+
+Disk stats (read/write):
+  eda0: ios=103927349/0, merge=0/0, ticks=84405647/0, in_queue=25024333, util=100.00%
+	Command being timed: "/home/vitaly/src/fio/fio --filename=/dev/eda0 --rw=randread --direct=1 --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting"
+	User time (seconds): 104.82
+	System time (seconds): 681.01
+	Percent of CPU this job got: 1298%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:00.51
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 415288
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 108361
+	Voluntary context switches: 9976616
+	Involuntary context switches: 396146
+	Swaps: 0
+	File system inputs: 833343320
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

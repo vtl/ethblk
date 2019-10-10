@@ -1,0 +1,54 @@
+$ sudo /usr/bin/time -v  ~/src/fio/fio --filename=/dev/mapper/vg_nvme-bar --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting
+foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128
+...
+fio-3.14-6-g97134
+Starting 16 processes
+Jobs: 16 (f=16): [r(16)][100.0%][r=10.7GiB/s][r=2811k IOPS][eta 00m:00s]
+foo: (groupid=0, jobs=16): err= 0: pid=927: Wed Oct  9 18:42:53 2019
+  read: IOPS=2833k, BW=10.8GiB/s (11.6GB/s)(648GiB/60001msec)
+    slat (usec): min=2, max=1341, avg= 4.20, stdev= 2.45
+    clat (usec): min=12, max=7801, avg=717.47, stdev=49.50
+     lat (usec): min=15, max=7805, avg=721.88, stdev=49.75
+    clat percentiles (usec):
+     |  1.00th=[  652],  5.00th=[  668], 10.00th=[  676], 20.00th=[  685],
+     | 30.00th=[  693], 40.00th=[  701], 50.00th=[  709], 60.00th=[  717],
+     | 70.00th=[  725], 80.00th=[  742], 90.00th=[  775], 95.00th=[  807],
+     | 99.00th=[  865], 99.50th=[  906], 99.90th=[ 1090], 99.95th=[ 1221],
+     | 99.99th=[ 1450]
+   bw (  MiB/s): min= 9832, max=11658, per=100.00%, avg=11066.13, stdev=22.16, samples=1904
+   iops        : min=2517036, max=2984480, avg=2832928.26, stdev=5673.96, samples=1904
+  lat (usec)   : 20=0.01%, 50=0.01%, 100=0.01%, 250=0.01%, 500=0.01%
+  lat (usec)   : 750=84.30%, 1000=15.56%
+  lat (msec)   : 2=0.14%, 4=0.01%, 10=0.01%
+  cpu          : usr=31.48%, sys=68.14%, ctx=361854, majf=0, minf=2646
+  IO depths    : 1=0.1%, 2=0.1%, 4=0.1%, 8=0.1%, 16=0.1%, 32=0.1%, >=64=100.0%
+     submit    : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.0%
+     complete  : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.1%
+     issued rwts: total=169975687,0,0,0 short=0,0,0,0 dropped=0,0,0,0
+     latency   : target=0, window=0, percentile=100.00%, depth=128
+
+Run status group 0 (all jobs):
+   READ: bw=10.8GiB/s (11.6GB/s), 10.8GiB/s-10.8GiB/s (11.6GB/s-11.6GB/s), io=648GiB (696GB), run=60001-60001msec
+	Command being timed: "/home/vitaly/src/fio/fio --filename=/dev/mapper/vg_nvme-bar --rw=randread --direct=1 --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting"
+	User time (seconds): 302.74
+	System time (seconds): 654.47
+	Percent of CPU this job got: 1580%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:00.56
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 415468
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 110518
+	Voluntary context switches: 7118
+	Involuntary context switches: 362108
+	Swaps: 0
+	File system inputs: 1359805496
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

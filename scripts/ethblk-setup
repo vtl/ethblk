@@ -1,24 +1,36 @@
 #!/bin/bash
 
-nic=enp1s0
 ini=1  # should be 1 on initiator and 0 on target
 tgt=0  # should be 1 on target and 0 on initiator
-tgt_ip=192.168.51.1
-tgt_disk=/dev/nvme0n1
-ini_ip=192.168.51.51
+
+tgt_nic=enp33s0
+tgt_ip=192.168.50.3
+tgt_disk=/dev/mapper/vg_nvme-bar
+
+ini_nic=enp193s0
+ini_ip=192.168.50.2
 ini_mac=50:6b:4b:cc:f3:e6
 
+systemctl stop irqbalance
+systemctl stop tuned
+
+#sudo mlnx_tune -p HIGH_THROUGHPUT
+
 sudo rmmod ethblk
-sudo insmod ethblk.ko initiator=$ini target=$tgt disk_major=154
+sudo insmod ethblk.ko initiator=$ini target=$tgt disk_major=154 queue_depth=128 rps=0
+# uncomment for debug
+#echo module ethblk +p | sudo tee /sys/kernel/debug/dynamic_debug/control
 
 if [[ $ini -eq 1 ]]; then
-    sudo ifconfig $nic:1 $ini_ip mtu 9000
+    set_irq_affinity.sh ${ini_nic} # from mlnx-en-utils
+    sudo ifconfig $ini_nic $ini_ip mtu 9216
     echo 0 | sudo tee /sys/kernel/ethblk/initiator/create_disk
-    echo $tgt_ip $nic | sudo tee /sys/kernel/ethblk/initiator/eda0/targets/add
+    echo $tgt_ip $ini_nic | sudo tee /sys/kernel/ethblk/initiator/eda0/targets/add
 fi
 
 if [[ $tgt -eq 1 ]]; then
-    sudo ifconfig $nic:1 $tgt_ip mtu 9000
+    set_irq_affinity.sh ${tgt_nic} # from mlnx-en-utils
+    sudo ifconfig $tgt_nic $tgt_ip mtu 9216
     echo 0 $tgt_disk | sudo tee /sys/kernel/ethblk/target/create_disk
-    echo $ini_mac $nic | sudo tee /sys/kernel/ethblk/target/eda0/initiators/add
+    echo $ini_mac $tgt_nic | sudo tee /sys/kernel/ethblk/target/eda0/initiators/add
 fi

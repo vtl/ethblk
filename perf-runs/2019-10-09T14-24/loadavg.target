@@ -1,0 +1,40 @@
+$ cat /proc/loadavg; sudo ~/src/fio/fio --filename=/dev/nvme0n1:/dev/nvme1n1:/dev/nvme2n1:/dev/nvme3n1 --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=300 --group_reporting; cat /proc/loadavg
+2.47 10.63 7.57 2/670 1638
+foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128
+...
+fio-3.14-6-g97134
+Starting 16 processes
+Jobs: 16 (f=64): [r(16)][100.0%][r=11.5GiB/s][r=3015k IOPS][eta 00m:00s]
+foo: (groupid=0, jobs=16): err= 0: pid=1674: Wed Oct  9 20:48:59 2019
+  read: IOPS=3014k, BW=11.5GiB/s (12.3GB/s)(3449GiB/300002msec)
+    slat (nsec): min=1620, max=1817.2k, avg=3548.27, stdev=2559.81
+    clat (nsec): min=210, max=23303k, avg=674597.30, stdev=486376.30
+     lat (usec): min=13, max=23680, avg=678.34, stdev=486.49
+    clat percentiles (usec):
+     |  1.00th=[   95],  5.00th=[  169], 10.00th=[  229], 20.00th=[  322],
+     | 30.00th=[  404], 40.00th=[  478], 50.00th=[  545], 60.00th=[  627],
+     | 70.00th=[  742], 80.00th=[  930], 90.00th=[ 1303], 95.00th=[ 1696],
+     | 99.00th=[ 2409], 99.50th=[ 2638], 99.90th=[ 3130], 99.95th=[ 3326],
+     | 99.99th=[ 7963]
+   bw (  MiB/s): min= 5425, max=12580, per=99.99%, avg=11771.06, stdev=23.43, samples=9585
+   iops        : min=1388844, max=3220646, avg=3013390.72, stdev=5997.58, samples=9585
+  lat (nsec)   : 250=0.01%, 500=0.01%
+  lat (usec)   : 4=0.01%, 10=0.01%, 20=0.01%, 50=0.12%, 100=1.05%
+  lat (usec)   : 250=10.93%, 500=31.18%, 750=27.35%, 1000=11.95%
+  lat (msec)   : 2=14.76%, 4=2.63%, 10=0.02%, 20=0.01%, 50=0.01%
+  cpu          : usr=36.58%, sys=60.75%, ctx=16930527, majf=0, minf=57920
+  IO depths    : 1=0.1%, 2=0.1%, 4=0.1%, 8=0.1%, 16=0.1%, 32=0.1%, >=64=100.0%
+     submit    : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.0%
+     complete  : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.1%
+     issued rwts: total=904146074,0,0,0 short=0,0,0,0 dropped=0,0,0,0
+     latency   : target=0, window=0, percentile=100.00%, depth=128
+
+Run status group 0 (all jobs):
+   READ: bw=11.5GiB/s (12.3GB/s), 11.5GiB/s-11.5GiB/s (12.3GB/s-12.3GB/s), io=3449GiB (3703GB), run=300002-300002msec
+
+Disk stats (read/write):
+  nvme0n1: ios=225901149/0, merge=0/0, ticks=60656389/0, in_queue=2215649, util=100.00%
+  nvme1n1: ios=225901152/0, merge=0/0, ticks=65551863/0, in_queue=4319481, util=100.00%
+  nvme2n1: ios=225901322/0, merge=0/0, ticks=61317007/0, in_queue=2963389, util=100.00%
+  nvme3n1: ios=225900520/0, merge=0/0, ticks=226185816/0, in_queue=119268697, util=100.00%
+15.78 13.91 9.85 1/636 1704

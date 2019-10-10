@@ -1,0 +1,37 @@
+$ cat /proc/loadavg; sudo ~/src/fio/fio --filename=/dev/eda0 --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=300 --group_reporting; cat /proc/loadavg
+8.48 3.02 1.13 1/1319 93948
+foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128
+...
+fio-3.14-6-g97134
+Starting 16 processes
+Jobs: 16 (f=16): [r(16)][100.0%][r=6577MiB/s][r=1684k IOPS][eta 00m:00s]
+foo: (groupid=0, jobs=16): err= 0: pid=93984: Wed Oct  9 16:36:10 2019
+  read: IOPS=1733k, BW=6770MiB/s (7099MB/s)(1983GiB/300002msec)
+    slat (nsec): min=1330, max=10125k, avg=6056.84, stdev=24452.26
+    clat (nsec): min=110, max=25639k, avg=1174496.80, stdev=725383.84
+     lat (usec): min=36, max=26232, avg=1180.72, stdev=729.04
+    clat percentiles (usec):
+     |  1.00th=[  515],  5.00th=[  676], 10.00th=[  725], 20.00th=[  783],
+     | 30.00th=[  832], 40.00th=[  881], 50.00th=[  947], 60.00th=[ 1029],
+     | 70.00th=[ 1188], 80.00th=[ 1434], 90.00th=[ 1827], 95.00th=[ 2311],
+     | 99.00th=[ 4228], 99.50th=[ 5276], 99.90th=[ 7963], 99.95th=[ 9241],
+     | 99.99th=[11994]
+   bw (  MiB/s): min= 3557, max= 9804, per=99.99%, avg=6769.17, stdev=61.64, samples=9586
+   iops        : min=910748, max=2510004, avg=1732906.77, stdev=15778.62, samples=9586
+  lat (nsec)   : 250=0.01%, 500=0.01%, 1000=0.01%
+  lat (usec)   : 4=0.01%, 10=0.01%, 20=0.01%, 50=0.01%, 100=0.02%
+  lat (usec)   : 250=0.15%, 500=0.73%, 750=13.11%, 1000=43.13%
+  lat (msec)   : 2=35.51%, 4=6.16%, 10=1.16%, 20=0.03%, 50=0.01%
+  cpu          : usr=10.58%, sys=70.97%, ctx=51298732, majf=0, minf=177
+  IO depths    : 1=0.1%, 2=0.1%, 4=0.1%, 8=0.1%, 16=0.1%, 32=0.1%, >=64=100.0%
+     submit    : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.0%
+     complete  : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.1%
+     issued rwts: total=519945585,0,0,0 short=0,0,0,0 dropped=0,0,0,0
+     latency   : target=0, window=0, percentile=100.00%, depth=128
+
+Run status group 0 (all jobs):
+   READ: bw=6770MiB/s (7099MB/s), 6770MiB/s-6770MiB/s (7099MB/s-7099MB/s), io=1983GiB (2130GB), run=300002-300002msec
+
+Disk stats (read/write):
+  eda0: ios=519687695/0, merge=0/0, ticks=422930207/0, in_queue=125965160, util=100.00%
+17.63 12.23 5.68 2/1325 94118

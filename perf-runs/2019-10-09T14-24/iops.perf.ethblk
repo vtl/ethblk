@@ -1,0 +1,65 @@
+[vitaly@gravicappa ethblk]$ sudo perf stat -ddd -- ~/src/fio/fio --filename=/dev/eda0 --rw=randread --direct=1  --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting
+foo: (g=0): rw=randread, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=io_uring, iodepth=128
+...
+fio-3.14-6-g97134
+Starting 16 processes
+Jobs: 16 (f=16): [r(16)][100.0%][r=7079MiB/s][r=1812k IOPS][eta 00m:00s]
+foo: (groupid=0, jobs=16): err= 0: pid=91431: Wed Oct  9 14:23:22 2019
+  read: IOPS=1801k, BW=7035MiB/s (7377MB/s)(412GiB/60002msec)
+    slat (nsec): min=1340, max=11009k, avg=5632.93, stdev=24438.91
+    clat (usec): min=6, max=26139, avg=1130.47, stdev=734.44
+     lat (usec): min=45, max=26144, avg=1136.25, stdev=738.05
+    clat percentiles (usec):
+     |  1.00th=[  578],  5.00th=[  685], 10.00th=[  734], 20.00th=[  783],
+     | 30.00th=[  832], 40.00th=[  873], 50.00th=[  922], 60.00th=[  988],
+     | 70.00th=[ 1090], 80.00th=[ 1303], 90.00th=[ 1696], 95.00th=[ 2114],
+     | 99.00th=[ 4293], 99.50th=[ 5669], 99.90th=[ 8979], 99.95th=[10421],
+     | 99.99th=[13698]
+   bw (  MiB/s): min= 3938, max= 9832, per=100.00%, avg=7036.37, stdev=74.55, samples=1914
+   iops        : min=1008299, max=2516994, avg=1801311.99, stdev=19084.48, samples=1914
+  lat (usec)   : 10=0.01%, 20=0.01%, 50=0.01%, 100=0.01%, 250=0.07%
+  lat (usec)   : 500=0.41%, 750=12.96%, 1000=47.95%
+  lat (msec)   : 2=32.89%, 4=4.52%, 10=1.13%, 20=0.06%, 50=0.01%
+  cpu          : usr=11.16%, sys=70.91%, ctx=8989583, majf=0, minf=144
+  IO depths    : 1=0.1%, 2=0.1%, 4=0.1%, 8=0.1%, 16=0.1%, 32=0.1%, >=64=100.0%
+     submit    : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.0%
+     complete  : 0=0.0%, 4=100.0%, 8=0.0%, 16=0.0%, 32=0.0%, 64=0.0%, >=64=0.1%
+     issued rwts: total=108060738,0,0,0 short=0,0,0,0 dropped=0,0,0,0
+     latency   : target=0, window=0, percentile=100.00%, depth=128
+
+Run status group 0 (all jobs):
+   READ: bw=7035MiB/s (7377MB/s), 7035MiB/s-7035MiB/s (7377MB/s-7377MB/s), io=412GiB (443GB), run=60002-60002msec
+
+Disk stats (read/write):
+  eda0: ios=107815491/0, merge=0/0, ticks=91988564/0, in_queue=27118810, util=100.00%
+
+ Performance counter stats for '/home/vitaly/src/fio/fio --filename=/dev/eda0 --rw=randread --direct=1 --bs=4k --iodepth=128 --numjobs=16 --ioengine=io_uring --fixedbufs --name=foo --time_based --runtime=60 --group_reporting':
+
+        783,074.37 msec task-clock                #   12.937 CPUs utilized          
+         8,997,102      context-switches          #    0.011 M/sec                  
+            27,149      cpu-migrations            #    0.035 K/sec                  
+           106,318      page-faults               #    0.136 K/sec                  
+ 2,423,833,807,735      cycles                    #    3.095 GHz                      (33.34%)
+   264,275,055,869      stalled-cycles-frontend   #   10.90% frontend cycles idle     (33.34%)
+   147,796,854,929      stalled-cycles-backend    #    6.10% backend cycles idle      (33.34%)
+ 1,391,835,250,593      instructions              #    0.57  insn per cycle         
+                                                  #    0.19  stalled cycles per insn  (33.34%)
+   257,433,121,553      branches                  #  328.747 M/sec                    (33.33%)
+     3,353,729,128      branch-misses             #    1.30% of all branches          (33.32%)
+   700,170,326,149      L1-dcache-loads           #  894.130 M/sec                    (33.31%)
+    59,572,462,672      L1-dcache-load-misses     #    8.51% of all L1-dcache hits    (33.34%)
+   <not supported>      LLC-loads                                                   
+   <not supported>      LLC-load-misses                                             
+   335,151,432,602      L1-icache-loads           #  427.994 M/sec                    (33.33%)
+     4,357,909,940      L1-icache-load-misses     #    1.30% of all L1-icache hits    (33.34%)
+    16,543,268,969      dTLB-loads                #   21.126 M/sec                    (33.34%)
+       690,686,450      dTLB-load-misses          #    4.18% of all dTLB cache hits   (33.35%)
+     1,182,925,993      iTLB-loads                #    1.511 M/sec                    (33.32%)
+        41,313,152      iTLB-load-misses          #    3.49% of all iTLB cache hits   (33.33%)
+    16,855,554,338      L1-dcache-prefetches      #   21.525 M/sec                    (33.33%)
+   <not supported>      L1-dcache-prefetch-misses                                   
+
+      60.527688742 seconds time elapsed
+
+     107.599569000 seconds user
+     681.415751000 seconds sys
