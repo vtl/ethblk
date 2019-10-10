@@ -2083,7 +2083,13 @@ static int ethblk_skb_copy_to_cmd(struct sk_buff *skb,
 
 	rq_for_each_segment (bv, req, iter) {
 		to = page_address(bv.bv_page) + bv.bv_offset;
+		/*
+		  FIXME this is the only non-zerocopy bit in IO path.
+		  Needs DMA steering at NIC level...
+		*/
+#ifndef ETHBLK_INITIATOR_FAKE_ZEROCOPY
 		skb_copy_bits(skb, off, to, bv.bv_len);
+#endif
 		off += bv.bv_len;
 	}
 	return off;

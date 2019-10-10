@@ -22,6 +22,9 @@
 /* Defragment skb. Uncomment if kernel panics in ethblk_network_recv */
 //#define ETHBLK_NETWORK_LINEARIZE_SKB
 
+/* Uncomment for IOPS estimation on a fully zero-copy IO path */
+//#define ETHBLK_INITIATOR_FAKE_ZEROCOPY
+
 #define VERSION "0.1"
 
 extern int net_stat;
