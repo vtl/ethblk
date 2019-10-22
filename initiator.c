@@ -866,7 +866,7 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 static int ethblk_blk_open(struct block_device *bdev, fmode_t mode)
 {
 	struct ethblk_initiator_disk *d = bdev->bd_disk->private_data;
-	dprintk(info, "disk %s opened by %s\n", d->name, current->comm);
+	dprintk(debug, "disk %s opened by %s\n", d->name, current->comm);
 	ethblk_initiator_get_disk(d);
 	return 0;
 }
@@ -874,7 +874,7 @@ static int ethblk_blk_open(struct block_device *bdev, fmode_t mode)
 static void ethblk_blk_release(struct gendisk *disk, fmode_t mode)
 {
 	struct ethblk_initiator_disk *d = disk->private_data;
-	dprintk(info, "disk %s closed by %s\n", d->name, current->comm);
+	dprintk(debug, "disk %s closed by %s\n", d->name, current->comm);
 	ethblk_initiator_put_disk_delayed(d);
 }
 
