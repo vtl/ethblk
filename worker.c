@@ -229,6 +229,16 @@ ethblk_worker_create_pool(struct ethblk_worker_pool **pool,
 		ret = -ENOMEM;
 		goto out;
 	}
+
+	p->cb_cache = kmem_cache_create(name,
+				  sizeof(struct ethblk_worker_cb), 0,
+				  SLAB_HWCACHE_ALIGN, NULL);
+	if (!p->cb_cache) {
+		dprintk(err, "can't create kmem cache\n");
+		ret = -ENOMEM;
+		goto err;
+	}
+
 	strncpy(p->name, name, sizeof(p->name) - 1);
 
 	cpumask_copy(&p->cpumask, cpumask);
@@ -267,6 +277,9 @@ ethblk_worker_create_pool(struct ethblk_worker_pool **pool,
 	ret = 0;
 	goto out;
 err:
+	if (p->cb_cache)
+		kmem_cache_destroy(p->cb_cache);
+
 	ethblk_worker_destroy_pool(p);
 out:
 	return ret;
@@ -290,6 +303,7 @@ void ethblk_worker_destroy_pool(struct ethblk_worker_pool *p)
 	}
 
 	free_percpu(p->rps.stat);
+	kmem_cache_destroy(p->cb_cache);
 	kfree(p);
 	dprintk(info, "pool %p destroyed\n", p);
 }

@@ -204,7 +204,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 			ethblk_target_cmd_deferred(skb);
 			skb = NULL;
 		} else if (initiator_mode && rep_hdr->response) {
-			ethblk_initiator_cmd_response(skb);
+			ethblk_initiator_cmd_deferred(skb);
 			skb = NULL;
 		}
 		break;

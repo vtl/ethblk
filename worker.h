@@ -29,6 +29,12 @@ struct ethblk_worker_pool_rps {
 	int cpu_out[NR_CPUS]; /* TODO change to sorted list */
 };
 
+struct ethblk_worker_cb {
+	struct list_head list;
+	void (*fn)(struct ethblk_worker_cb *);
+	void *data;
+};
+
 struct ethblk_worker {
 	int idx;
 	struct ethblk_worker_pool *pool;
@@ -41,6 +47,7 @@ struct ethblk_worker {
 
 struct ethblk_worker_pool {
 	char name[16];
+	struct kmem_cache *cb_cache;
 	struct cpumask cpumask;
 	struct timer_list rps_reconfig_timer;
 	struct ethblk_worker worker[NR_CPUS];

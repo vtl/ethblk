@@ -15,10 +15,12 @@
 #include "ethblk.h"
 #include "initiator.h"
 #include "network.h"
+#include "worker.h"
 
 #define FIX_Q_USAGE_COUNTER
 
 static bool initiator_running = false;
+static struct ethblk_worker_pool *workers;
 
 static int lat_stat = 0;
 module_param(lat_stat, int, 0644);
@@ -2249,6 +2251,14 @@ out:
 	consume_skb(skb);
 }
 
+static void ethblk_initiator_cmd(struct ethblk_worker_cb *cb)
+{
+	struct sk_buff *skb = (struct sk_buff *)cb->data;
+
+	ethblk_initiator_cmd_response(skb);
+	kmem_cache_free(workers->cb_cache, cb);
+}
+
 static void ethblk_initiator_prepare_cfg_pkts(unsigned short drv_id,
 					      struct sk_buff_head *queue)
 {
@@ -2507,6 +2517,71 @@ static int ethblk_initiator_netdevice_event(struct notifier_block *unused,
 	return NOTIFY_DONE;
 }
 
+void ethblk_initiator_cmd_deferred(struct sk_buff *skb)
+{
+	struct ethblk_worker_cb *cb;
+
+	if (!initiator_running) {
+		consume_skb(skb);
+		return;
+	}
+
+	cb = kmem_cache_zalloc(workers->cb_cache, GFP_ATOMIC);
+	if (!cb) {
+		dprintk_ratelimit(debug, "can't allocate cb\n");
+		consume_skb(skb);
+		return;
+	}
+	INIT_LIST_HEAD(&cb->list);
+	cb->fn = ethblk_initiator_cmd;
+	cb->data = skb;
+	ethblk_worker_enqueue(workers, &cb->list);
+}
+
+static void ethblk_initiator_cmd_worker(struct kthread_work *work)
+{
+	struct ethblk_worker *w =
+		container_of(work, struct ethblk_worker, work);
+	struct list_head queue;
+	struct ethblk_worker_cb *cb, *n;
+	bool queue_empty;
+
+	dprintk(debug, "worker[%d] on\n", w->idx);
+	for (;;) {
+		INIT_LIST_HEAD(&queue);
+		spin_lock_bh(&w->lock);
+		list_splice_tail_init(&w->queue, &queue);
+		queue_empty = list_empty(&queue);
+		if (queue_empty)
+			w->active = false;
+		spin_unlock_bh(&w->lock);
+
+		if (queue_empty)
+			break;
+
+		list_for_each_entry_safe(cb, n, &queue, list) {
+			cb->fn(cb);
+		}
+	}
+
+	dprintk(debug, "worker[%d] off\n", w->idx);
+}
+
+static int ethblk_initiator_start_workers(void)
+{
+	int ret;
+
+	ret = ethblk_worker_create_pool(&workers,
+		"ethblk-ini", ethblk_initiator_cmd_worker, cpu_online_mask);
+	return ret;
+}
+
+static void ethblk_initiator_stop_workers(void)
+{
+	if (workers)
+		ethblk_worker_destroy_pool(workers);
+}
+
 static struct notifier_block ethblk_initiator_netdevice_notifier = {
 	.notifier_call = ethblk_initiator_netdevice_event
 };
@@ -2514,6 +2589,12 @@ static struct notifier_block ethblk_initiator_netdevice_notifier = {
 int __init ethblk_initiator_start(struct kobject *parent)
 {
 	int ret;
+
+	ret = ethblk_initiator_start_workers();
+	if (ret) {
+		dprintk(err, "can't starts workers: %d\n", ret);
+		goto out;
+	}
 
 	INIT_LIST_HEAD(&ethblk_initiator_disks);
 
@@ -2559,6 +2640,7 @@ int ethblk_initiator_stop(void)
 	unregister_netdevice_notifier(&ethblk_initiator_netdevice_notifier);
 	ethblk_initiator_destroy_all_disks();
 	kobject_del(&ethblk_sysfs_initiator_kobj);
+	ethblk_initiator_stop_workers();
 	unregister_blkdev(disk_major, "ethblk");
 	initiator_running = false;
 	ida_destroy(&ethblk_used_minors);
