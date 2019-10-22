@@ -12,7 +12,7 @@
 #include <linux/kthread.h>
 #include <linux/cpumask.h>
 
-enum {
+enum ethblk_worker_rps_type {
 	ETHBLK_WORKER_RPS_SAME,
 	ETHBLK_WORKER_RPS_NEIGHBOUR,
 	ETHBLK_WORKER_RPS_AUTO,
@@ -29,10 +29,16 @@ struct ethblk_worker_pool_rps {
 	int cpu_out[NR_CPUS]; /* TODO change to sorted list */
 };
 
+enum ethblk_worker_cb_type {
+	ETHBLK_WORKER_CB_TYPE_INITIATOR_IO,
+	ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER
+};
+
 struct ethblk_worker_cb {
 	struct list_head list;
 	void (*fn)(struct ethblk_worker_cb *);
 	void *data;
+	enum ethblk_worker_cb_type type;
 };
 
 struct ethblk_worker {

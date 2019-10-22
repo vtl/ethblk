@@ -2048,15 +2048,6 @@ out_skb:
 	consume_skb(skb);
 }
 
-void ethblk_initiator_discover_response_deferred(struct work_struct *work)
-{
-	/* FIXME remove that crap, push work through worker */
-	struct sk_buff *skb =
-		(struct sk_buff *)((char *)work - ((struct sk_buff *)0)->cb);
-
-	ethblk_initiator_discover_response(skb);
-}
-
 static void
 ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
 				 struct ethblk_cfg_hdr *cfg)
@@ -2256,7 +2247,18 @@ static void ethblk_initiator_cmd(struct ethblk_worker_cb *cb)
 {
 	struct sk_buff *skb = (struct sk_buff *)cb->data;
 
-	ethblk_initiator_cmd_response(skb);
+	switch (cb->type) {
+	case ETHBLK_WORKER_CB_TYPE_INITIATOR_IO:
+		ethblk_initiator_cmd_response(skb);
+		break;
+	case ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER:
+		ethblk_initiator_discover_response(skb);
+		break;
+	default:
+		dprintk(err, "unknown cb type: %d\n", cb->type);
+		consume_skb(skb);
+		break;
+	}
 	kmem_cache_free(workers->cb_cache, cb);
 }
 
@@ -2518,14 +2520,13 @@ static int ethblk_initiator_netdevice_event(struct notifier_block *unused,
 	return NOTIFY_DONE;
 }
 
-void ethblk_initiator_cmd_deferred(struct sk_buff *skb)
+void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
+				   int type)
 {
-	struct ethblk_worker_cb *cb;
+	struct ethblk_worker_cb *cb = NULL;
 
-	if (!initiator_running) {
-		consume_skb(skb);
-		return;
-	}
+	if (!initiator_running)
+		goto err;
 
 	cb = kmem_cache_zalloc(workers->cb_cache, GFP_ATOMIC);
 	if (!cb) {
@@ -2535,6 +2536,7 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb)
 	INIT_LIST_HEAD(&cb->list);
 	cb->fn = ethblk_initiator_cmd;
 	cb->data = skb;
+	cb->type = type;
 	if (!ethblk_worker_enqueue(workers, &cb->list)) {
 		dprintk_ratelimit(err, "can't enqueue work\n");
 		goto err;
