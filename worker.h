@@ -59,7 +59,7 @@ ethblk_worker_create_pool(struct ethblk_worker_pool **p, const char *name,
 			  kthread_work_func_t fn,
 			  const struct cpumask *cpumask);
 void ethblk_worker_destroy_pool(struct ethblk_worker_pool *p);
-void ethblk_worker_enqueue(struct ethblk_worker_pool *p,
+bool ethblk_worker_enqueue(struct ethblk_worker_pool *p,
 			   struct list_head *list);
 
 #endif

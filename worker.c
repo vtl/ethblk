@@ -308,12 +308,12 @@ void ethblk_worker_destroy_pool(struct ethblk_worker_pool *p)
 	dprintk(info, "pool %p destroyed\n", p);
 }
 
-void ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
+bool ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
 {
 	int cpu_in = smp_processor_id();
 	int cpu_out;
 	struct ethblk_worker *w;
-	bool ret;
+	bool ret = true;
 	bool active, empty;
 	struct ethblk_worker_pool_rps_stat *s;
 
@@ -322,7 +322,8 @@ void ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
 	if (!w) {
 		dprintk(err, "cpu_in %d cpu_out %d has no worker\n",
 			cpu_in, cpu_out);
-		return;
+		ret = false;
+		goto out;
 	}
 	s = per_cpu_ptr(p->rps.stat, cpu_in);
 	s->in[cpu_in]++;
@@ -338,4 +339,6 @@ void ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
 
 	if (!active)
 		ret = kthread_queue_work(w->worker, &w->work);
+out:
+	return ret;
 }

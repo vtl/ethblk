@@ -2530,13 +2530,22 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb)
 	cb = kmem_cache_zalloc(workers->cb_cache, GFP_ATOMIC);
 	if (!cb) {
 		dprintk_ratelimit(debug, "can't allocate cb\n");
-		consume_skb(skb);
-		return;
+		goto err;
 	}
 	INIT_LIST_HEAD(&cb->list);
 	cb->fn = ethblk_initiator_cmd;
 	cb->data = skb;
-	ethblk_worker_enqueue(workers, &cb->list);
+	if (!ethblk_worker_enqueue(workers, &cb->list)) {
+		dprintk_ratelimit(err, "can't enqueue work\n");
+		goto err;
+	}
+	goto out;
+err:
+	if (cb)
+		kmem_cache_free(workers->cb_cache, cb);
+	consume_skb(skb);
+out:
+	return;
 }
 
 static void ethblk_initiator_cmd_worker(struct kthread_work *work)
