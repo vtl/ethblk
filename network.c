@@ -78,11 +78,7 @@ bool ethblk_network_skb_is_l3(struct sk_buff *skb)
 	return ((skb->protocol == htons(ETH_P_IP) &&
 		 (ip_hdr(skb)->protocol == IPPROTO_UDP) &&
 		 (ntohs(udp_hdr(skb)->dest) >= eth_p_type) &&
-		 /* FIXME eth_p_type for control flow.
-		  * Taget network init should scan for free range of
-		  * 64 ports, reserve it and sends the note to initiators
-		  */
-		 (ntohs(udp_hdr(skb)->dest)  < eth_p_type + 64)));
+		 (ntohs(udp_hdr(skb)->dest)  < eth_p_type + ip_ports)));
 }
 
 bool ethblk_network_skb_is_mine(struct sk_buff *skb)

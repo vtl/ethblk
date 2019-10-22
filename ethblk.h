@@ -29,6 +29,7 @@
 
 extern int net_stat;
 extern unsigned int eth_p_type;
+extern int ip_ports;
 
 extern char *log_buf;
 #define LOG_ENTRY_SIZE 256
