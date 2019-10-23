@@ -1086,7 +1086,7 @@ void ethblk_target_cmd(struct ethblk_target_cmd *cmd)
 	}
 }
 
-void ethblk_target_cmd_deferred(struct sk_buff *skb)
+void ethblk_target_cmd_deferred(struct sk_buff *skb, struct list_head *queue)
 {
 	struct ethblk_target_cmd *cmd;
 
@@ -1105,16 +1105,30 @@ void ethblk_target_cmd_deferred(struct sk_buff *skb)
 	cmd->req_hdr = ethblk_network_skb_get_hdr(skb);
 	cmd->l3 = ethblk_network_skb_is_l3(skb);
 
+	if (queue) {
+		list_add_tail(&cmd->list, queue);
+		goto out;
+	}
+
 	if (!ethblk_worker_enqueue(workers, &cmd->list)) {
 		dprintk_ratelimit(debug, "can't enqueue work\n");
 		goto err;
 	}
+
 	goto out;
 err:
 	kmem_cache_free(ethblk_target_cmd_cache, cmd);
 	consume_skb(skb);
 out:
 	return;
+}
+
+void ethblk_target_cmd_deferred_list(struct list_head *queue)
+{
+	if (!ethblk_worker_enqueue(workers, queue)) {
+		dprintk_ratelimit(debug, "can't enqueue works\n");
+		/* FIXME kmem_cache_free, consume_skb... */
+	}
 }
 
 static void ethblk_target_cmd_worker(struct kthread_work *work)

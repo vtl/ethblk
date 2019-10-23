@@ -136,9 +136,11 @@ int ethblk_network_xmit_skb(struct sk_buff *skb)
 	return ret;
 }
 
-static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
-			       struct packet_type *pt,
-			       struct net_device *orig_dev)
+static int ethblk_network_recv_one(struct sk_buff *skb, struct net_device *ifp,
+				   struct packet_type *pt,
+				   struct net_device *orig_dev,
+				   struct list_head *target_list,
+				   struct list_head *initiator_list)
 {
 	struct ethblk_hdr *rep_hdr;
 	int ret = NET_RX_DROP;
@@ -182,12 +184,13 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 		dprintk(debug, "iface %s skb %p L%d ETHBLK IO cmd\n", ifp->name, skb,
 			ethblk_network_skb_is_l2(skb) ? 2 : 3);
 		if (target_mode && !rep_hdr->response) {
-			ethblk_target_cmd_deferred(skb);
+			ethblk_target_cmd_deferred(skb, target_list);
 			skb = NULL;
 		} else if (initiator_mode && rep_hdr->response) {
 			ethblk_initiator_cmd_deferred(
 				skb,
-				ETHBLK_WORKER_CB_TYPE_INITIATOR_IO);
+				ETHBLK_WORKER_CB_TYPE_INITIATOR_IO,
+				initiator_list);
 			skb = NULL;
 		}
 		break;
@@ -199,7 +202,8 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 		} else if (initiator_mode && rep_hdr->response) {
 			ethblk_initiator_cmd_deferred(
 				skb,
-				ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER);
+				ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER,
+				initiator_list);
 			skb = NULL;
 		}
 		break;
@@ -215,13 +219,42 @@ exit:
 	return ret;
 }
 
+static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
+			       struct packet_type *pt,
+			       struct net_device *orig_dev)
+{
+	return ethblk_network_recv_one(skb, ifp, pt, orig_dev, NULL, NULL);
+}
+
+void ethblk_network_recv_list(struct list_head *head, struct packet_type *pt,
+			      struct net_device *orig_dev)
+{
+	struct sk_buff *skb, *next;
+	struct list_head target_list, initiator_list;
+
+	INIT_LIST_HEAD(&target_list);
+	INIT_LIST_HEAD(&initiator_list);
+
+	list_for_each_entry_safe(skb, next, head, list) {
+		skb_list_del_init(skb);
+		ethblk_network_recv_one(skb, skb->dev, pt, orig_dev,
+					&target_list, &initiator_list);
+	}
+	if (!list_empty(&target_list))
+		ethblk_target_cmd_deferred_list(&target_list);
+	if (!list_empty(&initiator_list))
+		ethblk_initiator_cmd_deferred_list(&initiator_list);
+}
+
 static struct packet_type ethblk_pt __read_mostly = {
-	.func = ethblk_network_recv,
+	.func	   = ethblk_network_recv,
+	.list_func = ethblk_network_recv_list,
 };
 
 static struct packet_type ethblk_ip_pt __read_mostly = {
-	.type = cpu_to_be16(ETH_P_IP),
-	.func = ethblk_network_recv,
+	.type      = cpu_to_be16(ETH_P_IP),
+	.func	   = ethblk_network_recv,
+	.list_func = ethblk_network_recv_list,
 };
 
 struct sk_buff *ethblk_network_new_skb(unsigned long len)

@@ -2521,7 +2521,8 @@ static int ethblk_initiator_netdevice_event(struct notifier_block *unused,
 }
 
 void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
-				   int type)
+				   int type,
+				   struct list_head *queue)
 {
 	struct ethblk_worker_cb *cb = NULL;
 
@@ -2537,10 +2538,17 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
 	cb->fn = ethblk_initiator_cmd;
 	cb->data = skb;
 	cb->type = type;
+
+	if (queue) {
+		list_add_tail(&cb->list, queue);
+		goto out;
+	}
+
 	if (!ethblk_worker_enqueue(workers, &cb->list)) {
 		dprintk_ratelimit(err, "can't enqueue work\n");
 		goto err;
 	}
+
 	goto out;
 err:
 	if (cb)
@@ -2548,6 +2556,14 @@ err:
 	consume_skb(skb);
 out:
 	return;
+}
+
+void ethblk_initiator_cmd_deferred_list(struct list_head *queue)
+{
+	if (!ethblk_worker_enqueue(workers, queue)) {
+		dprintk_ratelimit(debug, "can't enqueue works\n");
+		/* FIXME kmem_cache_free, consume_skb... */
+	}
 }
 
 static void ethblk_initiator_cmd_worker(struct kthread_work *work)

@@ -74,6 +74,7 @@ int ethblk_target_stop(void);
 
 void ethblk_target_handle_discover(struct sk_buff *);
 void ethblk_target_cmd(struct ethblk_target_cmd *);
-void ethblk_target_cmd_deferred(struct sk_buff *);
+void ethblk_target_cmd_deferred(struct sk_buff *, struct list_head *);
+void ethblk_target_cmd_deferred_list(struct list_head *);
 
 #endif
