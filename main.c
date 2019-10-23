@@ -23,6 +23,10 @@ int net_stat = 1;
 module_param(net_stat, int, 0644);
 MODULE_PARM_DESC(net_stat, "Enable network counters");
 
+int ip_ports = 64;
+module_param(ip_ports, int, 0644);
+MODULE_PARM_DESC(ip_ports, "Use that many ports");
+
 char *log_buf;
 
 bool target_mode = false;

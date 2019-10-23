@@ -12,6 +12,7 @@
 #include "initiator.h"
 #include "network.h"
 #include "target.h"
+#include "worker.h"
 
 int ethblk_network_route_l3(struct net_device *nd, __be32 daddr, __be32 saddr,
 			    unsigned char *mac)
@@ -78,11 +79,7 @@ bool ethblk_network_skb_is_l3(struct sk_buff *skb)
 	return ((skb->protocol == htons(ETH_P_IP) &&
 		 (ip_hdr(skb)->protocol == IPPROTO_UDP) &&
 		 (ntohs(udp_hdr(skb)->dest) >= eth_p_type) &&
-		 /* FIXME eth_p_type for control flow.
-		  * Taget network init should scan for free range of
-		  * 64 ports, reserve it and sends the note to initiators
-		  */
-		 (ntohs(udp_hdr(skb)->dest)  < eth_p_type + 64)));
+		 (ntohs(udp_hdr(skb)->dest)  < eth_p_type + ip_ports)));
 }
 
 bool ethblk_network_skb_is_mine(struct sk_buff *skb)
@@ -105,22 +102,6 @@ void *ethblk_network_skb_get_payload(struct sk_buff *skb)
 {
 	return ((unsigned char *)ethblk_network_skb_get_hdr(skb)
 		+ sizeof(struct ethblk_hdr));
-}
-
-static void ethblk_network_run_deferred(struct sk_buff *skb, void *fn)
-{
-	struct work_struct *work;
-	struct sk_buff *clone = skb_clone(skb, GFP_ATOMIC);
-
-	if (!clone) {
-		dprintk(err, "can't clone skb\n");
-		return;
-	}
-
-	work = (void *)clone->cb;
-
-	INIT_WORK(work, fn);
-	queue_work(system_unbound_wq, work);
 }
 
 int ethblk_network_xmit_skb(struct sk_buff *skb)
@@ -204,7 +185,9 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 			ethblk_target_cmd_deferred(skb);
 			skb = NULL;
 		} else if (initiator_mode && rep_hdr->response) {
-			ethblk_initiator_cmd_deferred(skb);
+			ethblk_initiator_cmd_deferred(
+				skb,
+				ETHBLK_WORKER_CB_TYPE_INITIATOR_IO);
 			skb = NULL;
 		}
 		break;
@@ -214,9 +197,10 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 			ethblk_target_handle_discover(skb);
 			skb = NULL;
 		} else if (initiator_mode && rep_hdr->response) {
-			ethblk_network_run_deferred(
+			ethblk_initiator_cmd_deferred(
 				skb,
-				ethblk_initiator_discover_response_deferred);
+				ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER);
+			skb = NULL;
 		}
 		break;
 	default:

@@ -866,7 +866,7 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 static int ethblk_blk_open(struct block_device *bdev, fmode_t mode)
 {
 	struct ethblk_initiator_disk *d = bdev->bd_disk->private_data;
-	dprintk(info, "disk %s opened by %s\n", d->name, current->comm);
+	dprintk(debug, "disk %s opened by %s\n", d->name, current->comm);
 	ethblk_initiator_get_disk(d);
 	return 0;
 }
@@ -874,7 +874,7 @@ static int ethblk_blk_open(struct block_device *bdev, fmode_t mode)
 static void ethblk_blk_release(struct gendisk *disk, fmode_t mode)
 {
 	struct ethblk_initiator_disk *d = disk->private_data;
-	dprintk(info, "disk %s closed by %s\n", d->name, current->comm);
+	dprintk(debug, "disk %s closed by %s\n", d->name, current->comm);
 	ethblk_initiator_put_disk_delayed(d);
 }
 
@@ -945,7 +945,8 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		/* NOTE to fool Mellanox packet steering we have to
 		 * use semi-random source/dest ports */
 		// FIXME make tunable
-		udp->dest = udp->source = htons(eth_p_type + cmd->hctx_idx);
+		udp->dest = udp->source = htons(eth_p_type +
+						(cmd->hctx_idx % ip_ports));
 	} else {
 		skb->protocol = htons(eth_p_type);
 	}
@@ -2047,15 +2048,6 @@ out_skb:
 	consume_skb(skb);
 }
 
-void ethblk_initiator_discover_response_deferred(struct work_struct *work)
-{
-	/* FIXME remove that crap, push work through worker */
-	struct sk_buff *skb =
-		(struct sk_buff *)((char *)work - ((struct sk_buff *)0)->cb);
-
-	ethblk_initiator_discover_response(skb);
-}
-
 static void
 ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
 				 struct ethblk_cfg_hdr *cfg)
@@ -2255,7 +2247,18 @@ static void ethblk_initiator_cmd(struct ethblk_worker_cb *cb)
 {
 	struct sk_buff *skb = (struct sk_buff *)cb->data;
 
-	ethblk_initiator_cmd_response(skb);
+	switch (cb->type) {
+	case ETHBLK_WORKER_CB_TYPE_INITIATOR_IO:
+		ethblk_initiator_cmd_response(skb);
+		break;
+	case ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER:
+		ethblk_initiator_discover_response(skb);
+		break;
+	default:
+		dprintk(err, "unknown cb type: %d\n", cb->type);
+		consume_skb(skb);
+		break;
+	}
 	kmem_cache_free(workers->cb_cache, cb);
 }
 
@@ -2517,25 +2520,34 @@ static int ethblk_initiator_netdevice_event(struct notifier_block *unused,
 	return NOTIFY_DONE;
 }
 
-void ethblk_initiator_cmd_deferred(struct sk_buff *skb)
+void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
+				   int type)
 {
-	struct ethblk_worker_cb *cb;
+	struct ethblk_worker_cb *cb = NULL;
 
-	if (!initiator_running) {
-		consume_skb(skb);
-		return;
-	}
+	if (!initiator_running)
+		goto err;
 
 	cb = kmem_cache_zalloc(workers->cb_cache, GFP_ATOMIC);
 	if (!cb) {
 		dprintk_ratelimit(debug, "can't allocate cb\n");
-		consume_skb(skb);
-		return;
+		goto err;
 	}
 	INIT_LIST_HEAD(&cb->list);
 	cb->fn = ethblk_initiator_cmd;
 	cb->data = skb;
-	ethblk_worker_enqueue(workers, &cb->list);
+	cb->type = type;
+	if (!ethblk_worker_enqueue(workers, &cb->list)) {
+		dprintk_ratelimit(err, "can't enqueue work\n");
+		goto err;
+	}
+	goto out;
+err:
+	if (cb)
+		kmem_cache_free(workers->cb_cache, cb);
+	consume_skb(skb);
+out:
+	return;
 }
 
 static void ethblk_initiator_cmd_worker(struct kthread_work *work)
