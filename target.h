@@ -54,6 +54,7 @@ struct ethblk_target_disk {
 	struct work_struct free_work;
 	struct completion destroy_completion;
 	char *backend_path;
+	int old_dma_alignment;
 	char ident[512];
 };
 
