@@ -1012,7 +1012,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	return;
 out_err:
 	NET_STAT_INC(cmd->ini, cnt.err_count);
-	rep_hdr->status = bio->bi_status;
+	rep_hdr->status = 1;
 	ethblk_target_send_reply((unsigned long)cmd);
 	return;
 out_drop:
