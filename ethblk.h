@@ -74,7 +74,8 @@ struct ethblk_hdr {
 	__be64 lba;
 	__u8 num_sectors;
 	__be32 tag;
-	__u8 pad;
+/* FIXME need autopadding for target-side word-size DMA alignment */
+	__u8 pad[3];
 } __attribute__((packed));
 
 struct ethblk_cfg_hdr {
