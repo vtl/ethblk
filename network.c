@@ -147,10 +147,8 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	if (skb == NULL)
 		goto exit;
 
-#ifndef ETHBLK_NETWORK_LINEARIZE_SKB
 	if (!pskb_may_pull(skb, sizeof(struct ethblk_hdr) - ETH_HLEN))
 		goto exit;
-#endif
 
 	if (!ethblk_network_skb_is_mine(skb))
 		goto exit;
