@@ -58,6 +58,11 @@ struct ethblk_target_disk {
 	char ident[512];
 };
 
+enum ethblk_target_cmd_work_type {
+	ETHBLK_TARGET_CMD_WORK_TYPE_SKB,
+	ETHBLK_TARGET_CMD_WORK_TYPE_BIO,
+};
+
 struct ethblk_target_cmd {
 	struct list_head list;
 	struct ethblk_target_disk *d;
@@ -67,7 +72,7 @@ struct ethblk_target_cmd {
 	struct ethblk_hdr *req_hdr;
 	struct sk_buff *rep_skb;
 	bool l3;
-	struct tasklet_struct tl;
+	enum ethblk_target_cmd_work_type work_type;
 } __attribute__((aligned(64)));
 
 int ethblk_target_start(struct kobject *);

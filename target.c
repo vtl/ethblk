@@ -688,7 +688,7 @@ static struct kobj_type ethblk_sysfs_target_ktype = {
 };
 
 static void ethblk_target_cmd_rw_complete(struct bio *);
-static void ethblk_target_send_reply(unsigned long data);
+static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd);
 
 static void ethblk_target_cmd_free(struct ethblk_target_cmd *cmd)
 {
@@ -1013,7 +1013,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 out_err:
 	NET_STAT_INC(cmd->ini, cnt.err_count);
 	rep_hdr->status = 1;
-	ethblk_target_send_reply((unsigned long)cmd);
+	ethblk_target_send_reply(cmd);
 	return;
 out_drop:
 	NET_STAT_INC(cmd->ini, cnt.rx_dropped);
@@ -1021,9 +1021,8 @@ out:
 	ethblk_target_cmd_free(cmd);
 }
 
-static void ethblk_target_send_reply(unsigned long data)
+static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 {
-	struct ethblk_target_cmd *cmd = (struct ethblk_target_cmd *)data;
 	struct bio *bio = cmd->bio;
 	struct ethblk_hdr *rep_hdr = ethblk_network_skb_get_hdr(cmd->rep_skb);
 
@@ -1074,8 +1073,12 @@ out:
 static void ethblk_target_cmd_rw_complete(struct bio *bio)
 {
 	struct ethblk_target_cmd *cmd = bio->bi_private;
-	tasklet_init(&cmd->tl, ethblk_target_send_reply, (unsigned long)cmd);
-	tasklet_schedule(&cmd->tl);
+	cmd->work_type = ETHBLK_TARGET_CMD_WORK_TYPE_BIO;
+
+	if (!ethblk_worker_enqueue(workers, &cmd->list)) {
+		dprintk_ratelimit(debug, "can't enqueue bio work\n");
+		ethblk_target_cmd_free(cmd);
+	}
 }
 
 void ethblk_target_cmd(struct ethblk_target_cmd *cmd)
@@ -1115,6 +1118,7 @@ void ethblk_target_cmd_deferred(struct sk_buff *skb)
 	cmd->req_skb = skb;
 	cmd->req_hdr = ethblk_network_skb_get_hdr(skb);
 	cmd->l3 = ethblk_network_skb_is_l3(skb);
+	cmd->work_type = ETHBLK_TARGET_CMD_WORK_TYPE_SKB;
 
 	if (!ethblk_worker_enqueue(workers, &cmd->list)) {
 		dprintk_ratelimit(debug, "can't enqueue work\n");
@@ -1136,23 +1140,35 @@ static void ethblk_target_cmd_worker(struct kthread_work *work)
 	struct ethblk_target_cmd *cmd, *n;
 	bool queue_empty;
 	struct blk_plug plug;
+	unsigned long flags;
 
 	dprintk(debug, "worker[%d] on\n", w->idx);
 	for (;;) {
 		INIT_LIST_HEAD(&queue);
-		spin_lock_bh(&w->lock);
+		spin_lock_irqsave(&w->lock, flags);
 		list_splice_tail_init(&w->queue, &queue);
 		queue_empty = list_empty(&queue);
 		if (queue_empty)
 			w->active = false;
-		spin_unlock_bh(&w->lock);
+		spin_unlock_irqrestore(&w->lock, flags);
 
 		if (queue_empty)
 			break;
 
 		blk_start_plug(&plug);
 		list_for_each_entry_safe (cmd, n, &queue, list) {
-			ethblk_target_cmd(cmd);
+			switch(cmd->work_type) {
+			case ETHBLK_TARGET_CMD_WORK_TYPE_SKB:
+				ethblk_target_cmd(cmd);
+				break;
+			case ETHBLK_TARGET_CMD_WORK_TYPE_BIO:
+				ethblk_target_send_reply(cmd);
+				break;
+			default:
+				dprintk(err, "unknown work type%d\n",
+					cmd->work_type);
+				break;
+			}
 		}
 		blk_finish_plug(&plug);
 	}
