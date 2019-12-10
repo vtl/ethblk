@@ -185,6 +185,44 @@ static struct kobj_type ethblk_target_disk_ini_kobj_type = {
 	.sysfs_ops = &kobj_sysfs_ops,
 };
 
+
+static void ethblk_target_announce(struct ethblk_target_disk_ini *ini)
+{
+	struct ethblk_hdr *req_hdr;
+	struct sk_buff *skb;
+	int hdr_size = sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr);
+
+	rcu_read_lock();
+	dev_hold(ini->nd);
+	skb = ethblk_network_new_skb(hdr_size);
+	if (skb == NULL) {
+		dprintk(err, "skb alloc failure\n");
+		goto err;
+	}
+	skb_put(skb, hdr_size);
+	skb->dev = ini->nd;
+
+	req_hdr = (struct ethblk_hdr *)skb_mac_header(skb);
+	memset(req_hdr, 0, hdr_size);
+
+	eth_broadcast_addr(req_hdr->dst);
+	ether_addr_copy(req_hdr->src, ini->nd->dev_addr);
+
+	req_hdr->type = cpu_to_be16(eth_p_type);
+	req_hdr->version = ETHBLK_PROTO_VERSION;
+	req_hdr->response = 0;
+	req_hdr->status = 0;
+	req_hdr->drv_id = cpu_to_be16(ini->d->drv_id);
+	req_hdr->op = ETHBLK_OP_CFG_CHANGE;
+
+	ethblk_network_xmit_skb(skb);
+
+	/* FIXME send IP address as well  */
+err:
+	dev_put(ini->nd);
+	rcu_read_unlock();
+}
+
 static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 					    unsigned char *mac, char *iface)
 {
@@ -256,6 +294,9 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 	rcu_read_unlock();
 	mutex_unlock(&d->initiator_lock);
 	dprintk(info, "disk %s added new initiator %s\n", d->name, ini->name);
+
+	ethblk_target_announce(ini);
+
 	return 0;
 
 err_free_kobject:
@@ -1001,9 +1042,11 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	bio_set_dev(bio, d->bd);
 #endif
 	bio_set_op_attrs(bio, write ? REQ_OP_WRITE : REQ_OP_READ,
+/* FIXME RHEL-8...
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
 			 (queue_is_rq_based(q) ? REQ_NOWAIT : 0) |
 #endif
+*/
 			 (write ? REQ_SYNC | REQ_IDLE : 0));
 	bio->bi_end_io = ethblk_target_cmd_rw_complete;
 	bio->bi_private = cmd;

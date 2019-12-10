@@ -60,7 +60,7 @@ extern bool initiator_mode;
 #define	ETHBLK_OP_WRITE 1
 #define	ETHBLK_OP_DISCOVER 2
 #define	ETHBLK_OP_ID 3
-
+#define	ETHBLK_OP_CFG_CHANGE 4
 
 struct ethblk_hdr {
 	__u8 dst[ETH_ALEN];

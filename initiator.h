@@ -135,6 +135,7 @@ struct ethblk_initiator_cmd {
 void ethblk_initiator_discover_response(struct sk_buff *);
 void ethblk_initiator_cmd_response(struct sk_buff *);
 void ethblk_initiator_cmd_deferred(struct sk_buff *, int);
+void ethblk_initiator_handle_cfg_change(struct sk_buff *);
 
 int ethblk_initiator_start(struct kobject *);
 int ethblk_initiator_stop(void);

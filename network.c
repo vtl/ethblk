@@ -201,6 +201,13 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 			skb = NULL;
 		}
 		break;
+	case ETHBLK_OP_CFG_CHANGE:
+		dprintk(debug, "iface %s skb %p CFG_CHANGE cmd\n", ifp->name, skb);
+		if (initiator_mode && !rep_hdr->response) {
+			ethblk_initiator_handle_cfg_change(skb);
+			skb = NULL;
+		}
+		break;
 	default:
 		dprintk(err, "iface %s unknown ETHBLK command type 0x%02x\n",
 			ifp->name, rep_hdr->op);

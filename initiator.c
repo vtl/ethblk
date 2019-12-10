@@ -2313,6 +2313,45 @@ static void ethblk_initiator_discover(void)
 	}
 }
 
+
+void ethblk_initiator_handle_cfg_change(struct sk_buff *in_skb)
+{
+	struct ethblk_hdr *in_hdr = ethblk_network_skb_get_hdr(in_skb);
+	struct ethblk_hdr *req_hdr;
+	struct sk_buff *skb;
+	int hdr_size = sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr);
+
+	rcu_read_lock();
+	dev_hold(in_skb->dev);
+	skb = ethblk_network_new_skb(hdr_size);
+	if (skb == NULL) {
+		dprintk(err, "skb alloc failure\n");
+		goto err;
+	}
+	skb_put(skb, hdr_size);
+	skb->dev = in_skb->dev;
+
+	req_hdr = (struct ethblk_hdr *)skb_mac_header(skb);
+	memset(req_hdr, 0, hdr_size);
+
+	ether_addr_copy(req_hdr->dst, in_hdr->src);
+	ether_addr_copy(req_hdr->src, skb->dev->dev_addr);
+
+	req_hdr->type = cpu_to_be16(eth_p_type);
+	req_hdr->version = ETHBLK_PROTO_VERSION;
+	req_hdr->response = 0;
+	req_hdr->status = 0;
+	req_hdr->drv_id = in_hdr->drv_id;
+	req_hdr->op = ETHBLK_OP_DISCOVER;
+
+	ethblk_network_xmit_skb(skb);
+
+	/* FIXME send IP address as well  */
+err:
+	dev_put(in_skb->dev);
+	rcu_read_unlock();
+}
+
 static void ethblk_initiator_tgt_free(struct percpu_ref *ref)
 {
 	struct ethblk_initiator_tgt *t =
