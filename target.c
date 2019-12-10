@@ -190,7 +190,7 @@ static void ethblk_target_announce(struct ethblk_target_disk_ini *ini)
 {
 	struct ethblk_hdr *req_hdr;
 	struct sk_buff *skb;
-	int hdr_size = sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr);
+	int hdr_size = sizeof(struct ethblk_hdr);// + sizeof(struct ethblk_cfg_hdr);
 
 	rcu_read_lock();
 	dev_hold(ini->nd);
@@ -1258,12 +1258,15 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 		rep_hdr->drv_id = cpu_to_be16(d->drv_id);
 		rep_hdr->tag = rep_hdr->tag;
 		rep_hdr->op = req_hdr->op;
-		rep_hdr->lba = req_hdr->lba;
 		rep_hdr->num_sectors = req_hdr->num_sectors;
 
+		/* NOTE
+		 * ugly hack... tag is IPv4 address of target
+		 * comment out for disk to be discovered as L2
+		 */
+		rep_hdr->tag = ethblk_network_if_get_saddr(skb->dev);
+
 		rep_skb->dev = skb->dev;
-		/* FIXME send IP address of tgt iface */
-		/* FIXME send data port rande */
 		ethblk_network_xmit_skb(rep_skb);
 	}
 	rcu_read_unlock();

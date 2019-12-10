@@ -1723,30 +1723,40 @@ static void ethblk_initiator_destroy_all_disks(void)
 
 static struct ethblk_initiator_tgt *
 ethblk_initiator_disk_find_target(struct ethblk_initiator_disk *d,
-				  unsigned char *addr, struct net_device *nd)
+				  unsigned char *p, struct net_device *nd,
+				  bool l3)
 {
 	struct ethblk_initiator_tgt *t = NULL;
 	struct ethblk_initiator_tgt_array *ta;
 	int i;
+	__be32 ip = *(__be32 *)p;
 
-	dprintk(debug,
-		"disk %s searching target "
-		"%s_%02x:%02x:%02x:%02x:%02x:%02x\n",
-		d->name, nd->name, addr[0], addr[1], addr[2], addr[3], addr[4],
-		addr[5]);
+	if (l3) {
+		dprintk(debug,
+			"disk %s searching target "
+			"%s_%03d.%03d.%03d.%03d\n",
+			d->name, nd->name, p[0], p[1], p[2], p[3]);
+	} else {
+		dprintk(debug,
+			"disk %s searching target "
+			"%s_%02x:%02x:%02x:%02x:%02x:%02x\n",
+			d->name, nd->name, p[0], p[1], p[2], p[3],
+			p[4], p[5]);
+	}
 	rcu_read_lock();
 	ta = rcu_dereference(d->targets);
 	for (i = 0; i < ta->nr; i++) {
 		t = ta->tgts[i];
-		if ((nd == t->nd) && ether_addr_equal(t->mac, addr)) {
+		if ((nd == t->nd) && (l3 ? (t->dest_ip == ip) :
+					   ether_addr_equal(t->mac, p))) {
 			dprintk(debug, "disk %s found target[%d] %s %p\n",
 				d->name, i, t->name, t);
 			ethblk_initiator_get_tgt(t);
-			goto out;
+			goto out_unlock;
 		}
 	}
 	t = NULL;
-out:
+out_unlock:
 	rcu_read_unlock();
 	return t;
 }
@@ -1757,14 +1767,9 @@ ethblk_initiator_disk_find_target_by_skb(struct sk_buff *skb)
 	struct ethblk_hdr *req_hdr = ethblk_network_skb_get_hdr(skb);
 	struct ethblk_initiator_disk *d;
 	unsigned short drv_id;
-	struct ethblk_initiator_tgt *t = NULL;
-	struct ethblk_initiator_tgt_array *ta;
-	int i;
 	bool l3 = ethblk_network_skb_is_l3(skb);
-	__be32 ip = 0;
-	unsigned char *ipp = (unsigned char *)&ip;
-	unsigned char *addr = req_hdr->src;
-	struct net_device *nd = skb->dev;
+	unsigned char *p = l3 ? (unsigned char *)&ip_hdr(skb)->saddr : req_hdr->src;
+	struct ethblk_initiator_tgt *t = NULL;
 
 	drv_id = be16_to_cpu(req_hdr->drv_id);
 	d = ethblk_initiator_find_disk(drv_id, false);
@@ -1773,34 +1778,7 @@ ethblk_initiator_disk_find_target_by_skb(struct sk_buff *skb)
 		goto out;
 	}
 
-	if (l3) {
-		ip = ip_hdr(skb)->saddr;
-		dprintk(debug,
-			"disk %s searching target "
-			"%s_%03d.%03d.%03d.%03d\n",
-			d->name, nd->name, ipp[0], ipp[1], ipp[2], ipp[3]);
-	} else {
-		dprintk(debug,
-			"disk %s searching target "
-			"%s_%02x:%02x:%02x:%02x:%02x:%02x\n",
-			d->name, nd->name, addr[0], addr[1], addr[2], addr[3],
-			addr[4], addr[5]);
-	}
-	rcu_read_lock();
-	ta = rcu_dereference(d->targets);
-	for (i = 0; i < ta->nr; i++) {
-		t = ta->tgts[i];
-		if ((nd == t->nd) && (l3 ? (t->dest_ip == ip) :
-					   ether_addr_equal(t->mac, addr))) {
-			dprintk(debug, "disk %s found target[%d] %s %p\n",
-				d->name, i, t->name, t);
-			ethblk_initiator_get_tgt(t);
-			goto out_unlock;
-		}
-	}
-	t = NULL;
-out_unlock:
-	rcu_read_unlock();
+	t = ethblk_initiator_disk_find_target(d, p, skb->dev, l3);
 out:
 	return t;
 }
@@ -2017,14 +1995,20 @@ void ethblk_initiator_discover_response(struct sk_buff *skb)
 	struct ethblk_initiator_tgt *t;
 	struct ethblk_hdr *rep_hdr = (struct ethblk_hdr *)skb_mac_header(skb);
 	unsigned short drv_id;
-	unsigned char *p = rep_hdr->src;
+	bool l3 = rep_hdr->tag; /* NOTE ugly hack */
+	unsigned char *p = l3 ? (unsigned char *)&rep_hdr->tag : rep_hdr->src;
 
 	drv_id = be16_to_cpu(rep_hdr->drv_id);
-
-	dprintk(info,
-		"config response for eda%d "
-		"%s_%02x:%02x:%02x:%02x:%02x:%02x\n",
-		drv_id, skb->dev->name, p[0], p[1], p[2], p[3], p[4], p[5]);
+	if (l3)
+		dprintk(info,
+			"DISCOVER response for eda%d "
+			"%s_%03d.%03d.%03d.%03d\n",
+			drv_id, skb->dev->name, p[0], p[1], p[2], p[3]);
+	else
+		dprintk(info,
+			"DISCOVER response for eda%d "
+			"%s_%02x:%02x:%02x:%02x:%02x:%02x\n",
+			drv_id, skb->dev->name, p[0], p[1], p[2], p[3], p[4], p[5]);
 
 	d = ethblk_initiator_find_disk(drv_id, true);
 	if (d == NULL) {
@@ -2033,9 +2017,10 @@ void ethblk_initiator_discover_response(struct sk_buff *skb)
 	}
 
 	ethblk_initiator_get_disk(d);
-	t = ethblk_initiator_disk_find_target(d, rep_hdr->src, skb->dev);
+
+	t = ethblk_initiator_disk_find_target(d, p, skb->dev, l3);
 	if (!t) {
-		t = ethblk_initiator_disk_add_target(d, rep_hdr->src, skb->dev, 0);
+		t = ethblk_initiator_disk_add_target(d, p, skb->dev, l3);
 		if (!t)
 			goto bail;
 	}
