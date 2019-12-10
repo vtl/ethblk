@@ -237,6 +237,12 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 		goto err;
 	}
 
+	if (ether_addr_equal(mac, nd->dev_addr)) {
+		dprintk(err, "target can't be initiator to self\n");
+		ret = -EINVAL;
+		goto err_free_netdev;
+	}
+
 	ini = kzalloc(sizeof(struct ethblk_target_disk_ini), GFP_KERNEL);
 	if (!ini) {
 		dprintk(err, "can't allocate memory for new initiator\n");
