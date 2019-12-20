@@ -380,11 +380,7 @@ static void ethblk_target_disk_inis_free(struct ethblk_target_disk *d)
 	list_for_each_entry_rcu (ini, &d->initiators, list) {
 		dprintk(info, "disk %s deleting initiator %s\n", d->name,
 			ini->name);
-		dev_put(ini->nd);
-		sysfs_remove_group(&ini->kobj, &ethblk_target_disk_ini_group);
-		kobject_del(&ini->kobj);
-		list_del_rcu(&ini->list);
-		kfree_rcu(ini, rcu);
+		ethblk_target_disk_delete_initiator(ini);
 	}
 	mutex_unlock(&d->initiator_lock);
 }
