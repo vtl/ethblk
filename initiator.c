@@ -715,6 +715,7 @@ create:
 	}
 
 	t = ethblk_initiator_disk_add_target(d, mac, nd, l3);
+	dev_put(nd);
 	if (!t) {
 		dprintk(err, "disk %s can't add target %s_%s (see logs)\n",
 			d->name, iface, s);
@@ -1047,6 +1048,8 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 	} else {
 		NET_STAT_INC(t, cnt.tx_count);
 	}
+
+	ethblk_initiator_put_tgt(t);
 
 	return BLK_STS_OK;
 }
@@ -1904,6 +1907,7 @@ out_stats:
 	ethblk_initiator_tgt_stat_free(tn);
 out_t:
 	kfree(t);
+	dev_put(nd);
 out_ctx:
 	kfree(tn->ctx);
 out_tn:
