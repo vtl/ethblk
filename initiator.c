@@ -1967,7 +1967,6 @@ out:
 	return ret;
 }
 
-
 static void ethblk_initiator_cmd_id_done(struct request *req,
 					 blk_status_t error)
 {
@@ -2030,7 +2029,6 @@ void ethblk_initiator_discover_response(struct sk_buff *skb)
 	}
 
 	ethblk_initiator_disk_send_id(d);
-	/* FIXME do we slip tgt ref here? */
 bail:
 	ethblk_initiator_put_disk(d);
 out_skb:
@@ -2351,6 +2349,7 @@ static void ethblk_initiator_tgt_free(struct percpu_ref *ref)
 	kobject_del(&t->kobj);
 	ethblk_initiator_tgt_stat_free(t);
 	dev_put(t->nd);
+	percpu_ref_exit(&t->ref);
 	kzfree(t->ctx);
 	kzfree(t);
 }

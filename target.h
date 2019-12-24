@@ -31,8 +31,10 @@ struct ethblk_target_disk_ini {
 	unsigned char mac[ETH_ALEN];
 	char name[ETH_ALEN * 3 + IFNAMSIZ];
 	struct net_device *nd;
-	struct kobject kobj;
 	struct ethblk_target_disk *d;
+	struct percpu_ref ref;
+	struct kobject kobj;
+	struct work_struct free_work;
 	struct ethblk_target_disk_net_stat __percpu *stat;
 	bool net_stat_enabled;
 };

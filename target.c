@@ -55,9 +55,11 @@ static struct kmem_cache *ethblk_target_cmd_cache = NULL;
 static DEFINE_MUTEX(ethblk_target_disks_lock);
 static struct list_head ethblk_target_disks;
 
+static void ethblk_target_initiator_free_deferred(struct work_struct *w);
 static void
 ethblk_target_disk_delete_initiator(struct ethblk_target_disk_ini *ini);
 static void ethblk_target_disk_free_deferred(struct work_struct *w);
+static void ethblk_target_ini_free(struct percpu_ref *ref);
 
 static struct ethblk_target_disk *ethblk_target_find_disk(unsigned short drv_id);
 
@@ -71,6 +73,16 @@ static inline void ethblk_target_get_disk(struct ethblk_target_disk *d)
 static inline void ethblk_target_put_disk(struct ethblk_target_disk *d)
 {
 	percpu_ref_put(&d->ref);
+}
+
+static inline void ethblk_target_get_ini(struct ethblk_target_disk_ini *ini)
+{
+	percpu_ref_get(&ini->ref);
+}
+
+static inline void ethblk_target_put_ini(struct ethblk_target_disk_ini *ini)
+{
+	percpu_ref_put(&ini->ref);
 }
 
 static int ethblk_target_disk_net_stat_init(
@@ -98,7 +110,7 @@ static void ethblk_target_unregister_netdevice(struct net_device *nd)
 	struct ethblk_target_disk_ini *ini;
 
 	/* FIXME rtnl_lock held, we are in atomic context. Oh well... */
-	dprintk(info, "nd %p name %s\n", nd, nd->name);
+	dprintk(info, "nd %px name %s\n", nd, nd->name);
 	rcu_read_lock();
 	list_for_each_entry_safe (d, n, &ethblk_target_disks, list) {
 		list_for_each_entry_rcu (ini, &d->initiators, list) {
@@ -111,18 +123,21 @@ static void ethblk_target_unregister_netdevice(struct net_device *nd)
 }
 
 static struct ethblk_target_disk_ini *
-ethblk_target_disk_initiator_lookup(struct ethblk_target_disk *d,
-				    const char *mac, struct net_device *nd)
-/* must be called under rcu lock */
+ethblk_target_disk_initiator_find(struct ethblk_target_disk *d,
+				  const char *mac, struct net_device *nd)
 {
 	struct ethblk_target_disk_ini *ini;
 
+	rcu_read_lock();
 	list_for_each_entry_rcu (ini, &d->initiators, list) {
-		if ((nd == ini->nd) && ether_addr_equal(mac, ini->mac))
+		if ((nd == ini->nd) && ether_addr_equal(mac, ini->mac)) {
+			ethblk_target_get_ini(ini);
 			goto out;
+		}
 	}
 	ini = NULL;
 out:
+	rcu_read_unlock();
 	return ini;
 }
 
@@ -130,13 +145,14 @@ static int ethblk_target_disk_access_check(struct ethblk_target_disk *d,
 					   const unsigned char *mac,
 					   struct net_device *nd)
 {
-	int ret;
+	struct ethblk_target_disk_ini *ini;
 
-	rcu_read_lock();
-	ret = !!ethblk_target_disk_initiator_lookup(d, mac, nd);
-	rcu_read_unlock();
+	ini = ethblk_target_disk_initiator_find(d, mac, nd);
 
-	return ret;
+	if (ini)
+		ethblk_target_put_ini(ini);
+
+	return !!ini;
 }
 
 static struct kobject ethblk_sysfs_target_kobj;
@@ -258,7 +274,7 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 	snprintf(ini->name, sizeof(ini->name),
 		 "%s_%02x:%02x:%02x:%02x:%02x:%02x", iface, mac[0], mac[1],
 		 mac[2], mac[3], mac[4], mac[5]);
-	dprintk(debug, "disk %s creating initiator %s %p\n", d->name, ini->name,
+	dprintk(debug, "disk %s creating initiator %s %px\n", d->name, ini->name,
 		ini);
 
 	ini->d = d;
@@ -266,14 +282,18 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 	ini->net_stat_enabled = d->net_stat_enabled;
 	ether_addr_copy(ini->mac, mac);
 	INIT_LIST_HEAD(&ini->list);
+	INIT_WORK(&ini->free_work, ethblk_target_initiator_free_deferred);
 
-	rcu_read_lock();
-	ret = !!ethblk_target_disk_initiator_lookup(d, ini->mac, nd);
-	rcu_read_unlock();
-	if (ret) {
+	if (ethblk_target_disk_access_check(d, ini->mac, nd)) {
 		dprintk(err, "disk %s initiator %s already exists\n", d->name,
 			ini->name);
 		ret = -EEXIST;
+		goto err_free_ini;
+	}
+
+	ret = percpu_ref_init(&ini->ref, ethblk_target_ini_free, 0, GFP_KERNEL);
+	if (ret) {
+		dprintk(err, "cannot init percpu_ref\n");
 		goto err_free_ini;
 	}
 
@@ -285,7 +305,7 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 		mutex_unlock(&d->initiator_lock);
 		dprintk(err, "disk %s ini %s can't add kobject: %d\n", d->name,
 			ini->name, ret);
-		goto err_free_ini;
+		goto err_free_ref;
 	}
 	ret = sysfs_create_group(&ini->kobj, &ethblk_target_disk_ini_group);
 	if (ret) {
@@ -295,10 +315,13 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 		goto err_free_kobject;
 	}
 
-	rcu_read_lock();
+	ethblk_target_get_disk(ini->d);
+
 	list_add_tail_rcu(&ini->list, &d->initiators);
-	rcu_read_unlock();
 	mutex_unlock(&d->initiator_lock);
+
+	synchronize_rcu();
+
 	dprintk(info, "disk %s added new initiator %s\n", d->name, ini->name);
 
 	ethblk_target_announce(ini);
@@ -307,6 +330,8 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 
 err_free_kobject:
 	kobject_del(&ini->kobj);
+err_free_ref:
+	percpu_ref_exit(&ini->ref);
 err_free_ini:
 	if (ini->stat)
 		free_percpu(ini->stat);
@@ -317,17 +342,45 @@ err:
 	return ret;
 }
 
+static void ethblk_target_initiator_free_deferred(struct work_struct *w)
+{
+	struct ethblk_target_disk_ini *ini =
+		container_of(w, struct ethblk_target_disk_ini, free_work);
+
+	dprintk(info, "disk %s freeing ini %s %px\n", ini->d->name, ini->name, ini);
+
+	dev_put(ini->nd);
+	sysfs_remove_group(&ini->kobj, &ethblk_target_disk_ini_group);
+	kobject_del(&ini->kobj);
+
+	ethblk_target_put_disk(ini->d);
+
+	free_percpu(ini->stat);
+	percpu_ref_exit(&ini->ref);
+	kfree_rcu(ini, rcu);
+}
+
+static void ethblk_target_ini_free(struct percpu_ref *ref)
+{
+	struct ethblk_target_disk_ini *ini =
+		container_of(ref, struct ethblk_target_disk_ini, ref);
+
+	dprintk(info, "disk %s ini %s %px schedule freeing\n", ini->d->name, ini->name, ini);
+
+	schedule_work(&ini->free_work);
+}
+
 static void
 ethblk_target_disk_delete_initiator(struct ethblk_target_disk_ini *ini)
 {
 	dprintk(info, "disk %s deleting initiator %s\n", ini->d->name,
 		ini->name);
-	dev_put(ini->nd);
-	sysfs_remove_group(&ini->kobj, &ethblk_target_disk_ini_group);
-	kobject_del(&ini->kobj);
+
+// NOTE	ini->d->initiator_lock) is already held
 	list_del_rcu(&ini->list);
-	free_percpu(ini->stat);
-	kfree_rcu(ini, rcu);
+
+	percpu_ref_kill(&ini->ref);
+
 	dprintk(info, "disk %s initiator %s deleted\n", ini->d->name,
 		ini->name);
 }
@@ -351,9 +404,9 @@ ethblk_target_disk_find_and_delete_initiator(struct ethblk_target_disk *d,
 		ret = -ENOENT;
 		goto err;
 	}
-	rcu_read_lock();
-	ini = ethblk_target_disk_initiator_lookup(d, mac, nd);
-	rcu_read_unlock();
+
+	ini = ethblk_target_disk_initiator_find(d, mac, nd);
+
 	if (!ini) {
 		char s[ETH_ALEN * 3];
 		ethblk_dump_mac(s, sizeof(s), mac);
@@ -362,7 +415,12 @@ ethblk_target_disk_find_and_delete_initiator(struct ethblk_target_disk *d,
 		ret = -ENOENT;
 		goto err_nd;
 	}
+
+	mutex_lock(&d->initiator_lock);
 	ethblk_target_disk_delete_initiator(ini);
+	mutex_unlock(&d->initiator_lock);
+
+	ethblk_target_put_ini(ini);
 	ret = 0;
 err_nd:
 	dev_put(nd);
@@ -414,7 +472,7 @@ static ssize_t ethblk_target_disk_destroy_store(struct kobject *kobj,
 	struct ethblk_target_disk *d =
 		container_of(kobj, struct ethblk_target_disk, kobj);
 
-	dprintk(info, "destroying disk %s %p\n", d->name, d);
+	dprintk(info, "destroying disk %s %px\n", d->name, d);
 	schedule_work(&d->destroy_work);
 	return count;
 }
@@ -545,7 +603,7 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	mutex_lock(&ethblk_target_disks_lock);
 	d = ethblk_target_find_disk(drv_id);
 	if (d) {
-		dprintk(err, "disk %s already exists: %p\n", d->name, d);
+		dprintk(err, "disk %s already exists: %px\n", d->name, d);
 		ethblk_target_put_disk(d);
 		ret = -EEXIST;
 		goto out;
@@ -653,7 +711,7 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 		container_of(w, struct ethblk_target_disk, free_work);
 	unsigned short drv_id = d->drv_id;
 
-	dprintk(info, "freeing disk %s %p\n", d->name, d);
+	dprintk(info, "freeing disk %s %px\n", d->name, d);
 
 	mutex_lock(&ethblk_target_disks_lock);
 	sysfs_remove_group(&d->inis_kobj, &ethblk_target_disk_inis_group);
@@ -663,14 +721,17 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 	list_del_rcu(&d->list);
 	mutex_unlock(&ethblk_target_disks_lock);
 
+	synchronize_rcu();
+
 	blk_queue_dma_alignment(d->bd->bd_queue, d->old_dma_alignment);
 	blkdev_put(d->bd, FMODE_READ | FMODE_WRITE);
-	ethblk_target_disk_inis_free(d);
+	/* Initiators must be already freed by now as they hold
+	   refcounts to the disk */
 	free_percpu(d->stat);
 	kfree(d->backend_path);
 	complete(&d->destroy_completion);
 	kfree_rcu(d, rcu);
-	dprintk(info, "disk %p eda%d freed\n", d, drv_id);
+	dprintk(info, "disk %px eda%d freed\n", d, drv_id);
 }
 
 static void ethblk_target_disk_free(struct percpu_ref *ref)
@@ -690,8 +751,11 @@ static void ethblk_target_destroy_all_disks(void)
 	mutex_unlock(&ethblk_target_disks_lock);
 
 	list_for_each_entry_safe (d, n, &tmp, list) {
-		dprintk(info, "destroying %s %p\n", d->name, d);
+		dprintk(info, "destroying %s %px\n", d->name, d);
 		percpu_ref_kill(&d->ref);
+
+		ethblk_target_disk_inis_free(d);
+
 		wait_for_completion(&d->destroy_completion);
 	}
 }
@@ -735,9 +799,11 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd);
 
 static void ethblk_target_cmd_free(struct ethblk_target_cmd *cmd)
 {
-	dprintk(debug, "cmd %p\n", cmd);
+	dprintk(debug, "cmd %px\n", cmd);
 	if (!cmd)
 		return;
+	if (cmd->ini)
+		ethblk_target_put_ini(cmd->ini);
 	if (cmd->d)
 		ethblk_target_put_disk(cmd->d);
 	if (cmd->bio)
@@ -822,11 +888,8 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 
 	stat = per_cpu_ptr(cmd->d->stat, smp_processor_id());
 
-	/* FIXME this is wrong, ini may slip right after rcu unlock */
-	rcu_read_lock();
 	cmd->ini =
-		ethblk_target_disk_initiator_lookup(cmd->d, req_hdr->src, req_skb->dev);
-	rcu_read_unlock();
+		ethblk_target_disk_initiator_find(cmd->d, req_hdr->src, req_skb->dev);
 
 	if (!cmd->ini) {
 		char s[ETH_ALEN * 3 + 1];
@@ -919,10 +982,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 
 	stat = per_cpu_ptr(d->stat, smp_processor_id());
 
-	/* FIXME this is wrong, ini may slip right after rcu unlock */
-	rcu_read_lock();
-	cmd->ini = ethblk_target_disk_initiator_lookup(d, req_hdr->src, req_skb->dev);
-	rcu_read_unlock();
+	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
 
 	if (!cmd->ini) {
 		char s[ETH_ALEN * 3 + 1];
@@ -980,7 +1040,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 
 	rep_skb->dev = req_skb->dev;
 
-	dprintk(debug, "req_skb %p rep_skb %p tag %u disk %s op %s lba %ld len %d\n",
+	dprintk(debug, "req_skb %px rep_skb %px tag %u disk %s op %s lba %ld len %d\n",
 		req_skb, rep_skb, be32_to_cpu(req_hdr->tag), d->name,
 		req_hdr->op == ETHBLK_OP_READ ? "READ" : "WRITE", lba,
 		len);
@@ -999,7 +1059,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 		skb_mac_header(bio_skb);
 	sgn = skb_to_sgvec(bio_skb, sgl, offset, len);
 	if (sgn < 0) {
-		dprintk(err, "skb %p skb_to_sgvec failed: %d\n", bio_skb, sgn);
+		dprintk(err, "skb %px skb_to_sgvec failed: %d\n", bio_skb, sgn);
 		goto out_err;
 	}
 	bio = bio_alloc(GFP_ATOMIC, sgn);
@@ -1010,14 +1070,14 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 			ret = bio_add_page(bio, sg_page(sg), sg->length,
 					   sg->offset);
 			dprintk(debug,
-				"skb %p bio %p bio_add_page[%d/%d] "
-				"page %p length %d offset %d: %d\n",
+				"skb %px bio %px bio_add_page[%d/%d] "
+				"page %px length %d offset %d: %d\n",
 				bio_skb, bio, i, sgn, sg_page(sg), sg->length,
 				sg->offset, ret);
 			if (ret != sg->length) {
 				dprintk(err,
-					"skb %p bio %p can't add "
-					"page[%d/%d] %p length %d "
+					"skb %px bio %px can't add "
+					"page[%d/%d] %px length %d "
 					"offset %d: %d\n",
 					bio_skb, bio, i, sgn, sg_page(sg),
 					sg->length, sg->offset, ret);
@@ -1053,6 +1113,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	bio->bi_end_io = ethblk_target_cmd_rw_complete;
 	bio->bi_private = cmd;
 	cmd->bio = bio;
+
 	submit_bio(bio);
 	return;
 out_err:
@@ -1060,6 +1121,7 @@ out_err:
 	rep_hdr->status = 1;
 	ethblk_target_send_reply(cmd);
 	return;
+
 out_drop:
 	NET_STAT_INC(cmd->ini, cnt.rx_dropped);
 out:
@@ -1080,14 +1142,14 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 
 		if (bio->bi_status)
 			dprintk(err,
-				"complete bio %p rep_skb %p req_skb %p "
+				"complete bio %px rep_skb %px req_skb %px "
 				"rep_hdr->tag %u with status %d\n",
 				bio, cmd->rep_skb, cmd->req_skb,
 				be32_to_cpu(rep_hdr->tag),
 				bio->bi_status);
 		else
 			dprintk(debug,
-				"complete bio %p rep_skb %p req_skb %p "
+				"complete bio %px rep_skb %px req_skb %px "
 				"rep_hdr->tag %u with status %d\n",
 				bio, cmd->rep_skb, cmd->req_skb,
 				be32_to_cpu(rep_hdr->tag),
@@ -1101,6 +1163,8 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 
 	ethblk_target_cmd_reply_finalize_skb_headers(cmd);
 
+	/* xmit_skb will consume skb, but we need it for the following NET_STAT */
+	skb_get(cmd->rep_skb);
 	if (ethblk_network_xmit_skb(cmd->rep_skb) == NET_XMIT_DROP) {
 		NET_STAT_INC(cmd->ini, cnt.tx_dropped);
 	} else {
@@ -1110,6 +1174,7 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 			      rep_hdr->num_sectors << 9 :
 			      0));
 	}
+	consume_skb(cmd->rep_skb);
 	cmd->rep_skb = NULL;
 out:
 	ethblk_target_cmd_free(cmd);
@@ -1136,9 +1201,13 @@ void ethblk_target_cmd(struct ethblk_target_cmd *cmd)
 	case ETHBLK_OP_ID:
 		ethblk_target_cmd_id(cmd);
 		break;
+	case ETHBLK_OP_DISCOVER:
+		ethblk_target_handle_discover(cmd->req_skb);
+		ethblk_target_cmd_free(cmd);
+		break;
 	default:
 		/* FIXME rx_dropped++ */
-		dprintk(err, "skb %p unknown cmdstat %d\n", cmd->req_skb,
+		dprintk(err, "skb %px unknown cmdstat %d\n", cmd->req_skb,
 			cmd->req_hdr->op);
 		ethblk_target_cmd_free(cmd);
 		break;
@@ -1159,6 +1228,7 @@ void ethblk_target_cmd_deferred(struct sk_buff *skb)
 		consume_skb(skb);
 		return;
 	}
+	dprintk(debug, "alloc cmd %px\n", cmd);
 	INIT_LIST_HEAD(&cmd->list);
 	cmd->req_skb = skb;
 	cmd->req_hdr = ethblk_network_skb_get_hdr(skb);
@@ -1202,6 +1272,7 @@ static void ethblk_target_cmd_worker(struct kthread_work *work)
 
 		blk_start_plug(&plug);
 		list_for_each_entry_safe (cmd, n, &queue, list) {
+			dprintk(debug, "cmd %px type %d\n", cmd, cmd->work_type);
 			switch(cmd->work_type) {
 			case ETHBLK_TARGET_CMD_WORK_TYPE_SKB:
 				ethblk_target_cmd(cmd);
@@ -1210,7 +1281,7 @@ static void ethblk_target_cmd_worker(struct kthread_work *work)
 				ethblk_target_send_reply(cmd);
 				break;
 			default:
-				dprintk(err, "unknown work type%d\n",
+				dprintk(err, "unknown work type %d\n",
 					cmd->work_type);
 				break;
 			}
@@ -1233,8 +1304,12 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 
 	dprintk(info, "checking initiator %s_%s access to disks\n",
 		skb->dev->name, s);
-	rcu_read_lock();
-	list_for_each_entry_rcu (d, &ethblk_target_disks, list) {
+/*
+  Can't do rcu_read_lock and then rtnl_lock in get_saddr.
+   FIXME add saddr to target->ini and avoid get_saddr here
+*/
+	mutex_lock(&ethblk_target_disks_lock);
+	list_for_each_entry(d, &ethblk_target_disks, list) {
 		if (!ethblk_target_disk_access_check(d, req_hdr->src, skb->dev))
 			continue;
 		dprintk(debug, "initiator %s_%s revealing disk %s\n",
@@ -1271,8 +1346,7 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 		rep_skb->dev = skb->dev;
 		ethblk_network_xmit_skb(rep_skb);
 	}
-	rcu_read_unlock();
-	consume_skb(skb);
+	mutex_unlock(&ethblk_target_disks_lock);
 }
 
 
@@ -1290,7 +1364,7 @@ static struct ethblk_target_disk *ethblk_target_find_disk(unsigned short drv_id)
 	d = NULL;
 out:
 	if (d) {
-		dprintk(debug, "found disk %p %s\n", d, d->name);
+		dprintk(debug, "found disk %px %s\n", d, d->name);
 		ethblk_target_get_disk(d);
 	}
 	rcu_read_unlock();
@@ -1355,7 +1429,7 @@ int __init ethblk_target_start(struct kobject *parent)
 		ret = -ENOMEM;
 		goto out;
 	}
-	dprintk(info, "ethblk_target_cmd_cache %p\n", ethblk_target_cmd_cache);
+	dprintk(info, "ethblk_target_cmd_cache %px\n", ethblk_target_cmd_cache);
 	ret = kobject_init_and_add(&ethblk_sysfs_target_kobj,
 				   &ethblk_sysfs_target_ktype, parent, "%s",
 				   "target");

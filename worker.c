@@ -186,7 +186,7 @@ static void ethblk_worker_pool_rps_reconfig(struct timer_list *tl)
 			in  += (per_cpu_ptr(p->rps.stat, i))->in[cpu];
 			out += (per_cpu_ptr(p->rps.stat, i))->out[cpu];
 		}
-		dprintk(debug, "pool %p, cpu %d rcv %08lu, served %08lu, "
+		dprintk(debug, "pool %px, cpu %d rcv %08lu, served %08lu, "
 			"sending to cpu %d\n",
 			p, cpu, in, out, p->rps.cpu_out[cpu]);
 		if (in)		/* CPU is serving NIC interrupts */
@@ -267,7 +267,7 @@ ethblk_worker_create_pool(struct ethblk_worker_pool **pool,
 		}
 	}
 
-	dprintk(info, "pool '%s' %p created with %d worker(s)\n", p->name, p,
+	dprintk(info, "pool '%s' %px created with %d worker(s)\n", p->name, p,
 		cpumask_weight(&p->cpumask));
 	*pool = p;
 
@@ -290,7 +290,7 @@ void ethblk_worker_destroy_pool(struct ethblk_worker_pool *p)
 	struct ethblk_worker *w;
 	int cpu;
 
-	dprintk(info, "destroying worker pool '%s' %p:\n", p->name, p);
+	dprintk(info, "destroying worker pool '%s' %px:\n", p->name, p);
 	del_timer_sync(&p->rps_reconfig_timer);
 	for_each_cpu(cpu, &p->cpumask) {
 		w = &p->worker[cpu];
@@ -305,7 +305,7 @@ void ethblk_worker_destroy_pool(struct ethblk_worker_pool *p)
 	free_percpu(p->rps.stat);
 	kmem_cache_destroy(p->cb_cache);
 	kfree(p);
-	dprintk(info, "pool %p destroyed\n", p);
+	dprintk(info, "pool %px destroyed\n", p);
 }
 
 bool ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)

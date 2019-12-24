@@ -112,10 +112,10 @@ int ethblk_network_xmit_skb(struct sk_buff *skb)
 
 	ifp = skb->dev;
 	if (!ifp) {
-		dprintk(err, "skb %p dev is NULL\n", skb);
+		dprintk(err, "skb %px dev is NULL\n", skb);
 	}
 	name = ifp ? ifp->name : "netif";
-	dprintk(debug, "skb %p dev %s\n", skb, name);
+	dprintk(debug, "skb %px dev %s\n", skb, name);
 	ret = dev_queue_xmit(skb);
 	if (ret != NET_XMIT_SUCCESS && net_ratelimit()) {
 		switch (ret) {
@@ -158,7 +158,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 
 #ifdef ETHBLK_NETWORK_LINEARIZE_SKB
 	if (skb_linearize(skb)) {
-		dprintk_ratelimit(debug, "drop non-linearized skb %p\n", skb);
+		dprintk_ratelimit(debug, "drop non-linearized skb %px\n", skb);
 		goto exit;
 	}
 #endif
@@ -168,7 +168,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	rep_hdr = ethblk_network_skb_get_hdr(skb);
 
 	if ((rep_hdr->version != ETHBLK_PROTO_VERSION)) {
-		dprintk(err, "iface %s skb %p version 0x%x\n",
+		dprintk(err, "iface %s skb %px version 0x%x\n",
 			ifp->name, skb, rep_hdr->version);
 		goto exit;
 	}
@@ -177,7 +177,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	case ETHBLK_OP_READ:
 	case ETHBLK_OP_WRITE:
 	case ETHBLK_OP_ID:
-		dprintk(debug, "iface %s skb %p L%d ETHBLK IO cmd\n", ifp->name, skb,
+		dprintk(debug, "iface %s skb %px L%d ETHBLK IO cmd\n", ifp->name, skb,
 			ethblk_network_skb_is_l2(skb) ? 2 : 3);
 		if (target_mode && !rep_hdr->response) {
 			ethblk_target_cmd_deferred(skb);
@@ -190,9 +190,9 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 		}
 		break;
 	case ETHBLK_OP_DISCOVER:
-		dprintk(debug, "iface %s skb %p DISCOVER cmd\n", ifp->name, skb);
+		dprintk(debug, "iface %s skb %px DISCOVER cmd\n", ifp->name, skb);
 		if (target_mode && !rep_hdr->response) {
-			ethblk_target_handle_discover(skb);
+			ethblk_target_cmd_deferred(skb);
 			skb = NULL;
 		} else if (initiator_mode && rep_hdr->response) {
 			ethblk_initiator_cmd_deferred(
@@ -202,7 +202,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 		}
 		break;
 	case ETHBLK_OP_CFG_CHANGE:
-		dprintk(debug, "iface %s skb %p CFG_CHANGE cmd\n", ifp->name, skb);
+		dprintk(debug, "iface %s skb %px CFG_CHANGE cmd\n", ifp->name, skb);
 		if (initiator_mode && !rep_hdr->response) {
 			ethblk_initiator_handle_cfg_change(skb);
 			skb = NULL;
