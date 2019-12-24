@@ -30,6 +30,7 @@ struct ethblk_target_disk_ini {
 	struct rcu_head rcu;
 	unsigned char mac[ETH_ALEN];
 	char name[ETH_ALEN * 3 + IFNAMSIZ];
+	__be32 ip;
 	struct net_device *nd;
 	struct ethblk_target_disk *d;
 	struct percpu_ref ref;

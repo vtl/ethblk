@@ -280,7 +280,10 @@ static int ethblk_target_disk_add_initiator(struct ethblk_target_disk *d,
 	ini->d = d;
 	ini->nd = nd;
 	ini->net_stat_enabled = d->net_stat_enabled;
+
 	ether_addr_copy(ini->mac, mac);
+	ini->ip = ethblk_network_if_get_saddr(ini->nd);
+
 	INIT_LIST_HEAD(&ini->list);
 	INIT_WORK(&ini->free_work, ethblk_target_initiator_free_deferred);
 
@@ -1298,19 +1301,18 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 	struct ethblk_hdr *rep_hdr;
 	struct sk_buff *rep_skb;
 	struct ethblk_target_disk *d;
+	struct ethblk_target_disk_ini *ini;
 	char s[ETH_ALEN * 3 + 1];
 
 	ethblk_dump_mac(s, sizeof(s), req_hdr->src);
 
 	dprintk(info, "checking initiator %s_%s access to disks\n",
 		skb->dev->name, s);
-/*
-  Can't do rcu_read_lock and then rtnl_lock in get_saddr.
-   FIXME add saddr to target->ini and avoid get_saddr here
-*/
-	mutex_lock(&ethblk_target_disks_lock);
+
+	rcu_read_lock();
 	list_for_each_entry(d, &ethblk_target_disks, list) {
-		if (!ethblk_target_disk_access_check(d, req_hdr->src, skb->dev))
+		ini = ethblk_target_disk_initiator_find(d, req_hdr->src, skb->dev);
+		if (!ini)
 			continue;
 		dprintk(debug, "initiator %s_%s revealing disk %s\n",
 			skb->dev->name, s, d->name);
@@ -1319,6 +1321,7 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 		if (!rep_skb) {
 			dprintk(err, "can't allocate %d bytes for discover rep_skb",
 				ETH_ZLEN);
+			ethblk_target_put_ini(ini);
 			continue;
 		}
 		rep_hdr = (struct ethblk_hdr *)skb_mac_header(rep_skb);
@@ -1341,12 +1344,13 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 		 * ugly hack... tag is IPv4 address of target
 		 * comment out for disk to be discovered as L2
 		 */
-		rep_hdr->tag = ethblk_network_if_get_saddr(skb->dev);
+		rep_hdr->tag = ini->ip;
 
 		rep_skb->dev = skb->dev;
 		ethblk_network_xmit_skb(rep_skb);
+		ethblk_target_put_ini(ini);
 	}
-	mutex_unlock(&ethblk_target_disks_lock);
+	rcu_read_unlock();
 }
 
 
