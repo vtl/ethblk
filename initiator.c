@@ -61,6 +61,7 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 				 bool l3);
 static int ethblk_initiator_disk_remove_target(struct ethblk_initiator_tgt *t);
 static void ethblk_initiator_disk_send_id(struct ethblk_initiator_disk *d);
+static void ethblk_initiator_tgt_free_deferred(struct work_struct *w);
 
 #define NET_STAT_ADD(t, var, val)                                              \
 	do {                                                                   \
@@ -1845,6 +1846,7 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 	dprintk(info, "disk %s creating target %s %p\n", d->name, tn->name, tn);
 
 	INIT_LIST_HEAD(&tn->list);
+	INIT_WORK(&tn->free_work, ethblk_initiator_tgt_free_deferred);
 
 	if (ethblk_initiator_tgt_stat_init(tn) != 0) {
 		dprintk(err, "cannot allocate tgt stats\n");
@@ -2343,6 +2345,15 @@ static void ethblk_initiator_tgt_free(struct percpu_ref *ref)
 {
 	struct ethblk_initiator_tgt *t =
 		container_of(ref, struct ethblk_initiator_tgt, ref);
+
+	dprintk(info, "disk %s %s %p schedule freeing\n", t->d->name, t->name, t);
+	schedule_work(&t->free_work);
+}
+
+static void ethblk_initiator_tgt_free_deferred(struct work_struct *w)
+{
+	struct ethblk_initiator_tgt *t =
+		container_of(w, struct ethblk_initiator_tgt, free_work);
 
 	dprintk(info, "disk %s freeing target %s %p\n", t->d->name, t->name, t);
 	sysfs_remove_group(&t->kobj, &ethblk_initiator_disk_tgt_group);

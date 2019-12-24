@@ -62,6 +62,7 @@ struct ethblk_initiator_tgt {
 	struct percpu_ref ref;
 	struct net_device *nd;
 	struct kobject kobj;
+	struct work_struct free_work;
 	struct ethblk_initiator_disk_tgt_context *ctx;
 	int relax_timeout_rearm;
 	bool net_stat_enabled;
