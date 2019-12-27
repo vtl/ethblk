@@ -14,6 +14,7 @@
 #include "ethblk.h"
 
 __be32 ethblk_network_if_get_saddr(struct net_device *nd);
+__be32 ethblk_network_if_get_saddr_unlocked(struct net_device *nd);
 bool ethblk_network_skb_is_l2(struct sk_buff *skb);
 bool ethblk_network_skb_is_l3(struct sk_buff *skb);
 bool ethblk_network_skb_is_mine(struct sk_buff *skb);

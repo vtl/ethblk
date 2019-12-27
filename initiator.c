@@ -1395,11 +1395,6 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 		if (cmd->t) {
 			tctx = &cmd->t->ctx[cmd->hctx_idx];
 			tctx->taint = min(tctx->taint + 1, 1000);
-			/* Drop cached router MAC and local IP just in case */
-			cmd->t->has_router_mac = false;
-			cmd->t->local_ip =
-				ethblk_network_if_get_saddr(cmd->t->nd);
-
 		}
 		/* Possible transport layer change, reconstruct skb */
 		if (cmd->t) {
@@ -2475,7 +2470,7 @@ static struct kobj_type ethblk_sysfs_initiator_ktype = {
 	.default_attrs = ethblk_sysfs_initiator_default_attrs,
 };
 
-static void ethblk_initiator_unregister_netdevice(struct net_device *nd)
+static void ethblk_initiator_netdevice_unregister(struct net_device *nd)
 {
 	struct ethblk_initiator_disk *d, *n;
 	struct ethblk_initiator_tgt_array *ta;
@@ -2539,6 +2534,41 @@ static void ethblk_initiator_netdevice_change_mtu(struct net_device *nd)
 	mutex_unlock(&ethblk_initiator_disks_lock);
 }
 
+static void ethblk_initiator_netdevice_up(struct net_device *nd)
+{
+	struct ethblk_initiator_disk *d, *n;
+	struct ethblk_initiator_tgt_array *ta;
+	struct ethblk_initiator_tgt *t;
+	unsigned long flags;
+	int i;
+	__be32 ip = ethblk_network_if_get_saddr_unlocked(nd);
+	unsigned char *p = (unsigned char *)&ip;
+
+	/* Reread IPv4 address */
+	dprintk(info, "nd %px name %s addr %03d.%03d.%03d.%03d\n",
+		nd, nd->name, p[0], p[1], p[2], p[3]);
+
+	mutex_lock(&ethblk_initiator_disks_lock);
+	list_for_each_entry_safe (d, n, &ethblk_initiator_disks, list) {
+		rcu_read_lock();
+		spin_lock_irqsave(&d->target_lock, flags);
+		ta = rcu_dereference(d->targets);
+		if (ta->nr) {
+			for (i = 0; i < ta->nr; i++) {
+				t = ta->tgts[i];
+				if (nd == t->nd) {
+					t->local_ip = ip;
+					t->has_router_mac = false;
+
+				}
+			}
+		}
+		spin_unlock_irqrestore(&d->target_lock, flags);
+		rcu_read_unlock();
+	}
+	mutex_unlock(&ethblk_initiator_disks_lock);
+}
+
 static int ethblk_initiator_netdevice_event(struct notifier_block *unused,
 					    unsigned long event, void *ptr)
 {
@@ -2546,11 +2576,13 @@ static int ethblk_initiator_netdevice_event(struct notifier_block *unused,
 
 	switch (event) {
 	case NETDEV_UNREGISTER:
-		ethblk_initiator_unregister_netdevice(nd);
+		ethblk_initiator_netdevice_unregister(nd);
 		break;
 	case NETDEV_CHANGEMTU:
 		ethblk_initiator_netdevice_change_mtu(nd);
 		break;
+	case NETDEV_UP:
+		ethblk_initiator_netdevice_up(nd);
 	default:
 		break;
 	}
