@@ -29,13 +29,13 @@ static int ethblk_worker_pool_rps_resteer(struct ethblk_worker_pool *p,
 	struct cpumask *temp = NULL;
 	struct cpumask *w = NULL;
 
-	temp = kzalloc(sizeof(struct cpumask), GFP_KERNEL);
+	temp = kzalloc(sizeof(struct cpumask), GFP_ATOMIC);
 	if (!temp) {
 		ret = -ENOMEM;
 		goto out;
 	}
 
-	w = kzalloc(sizeof(struct cpumask), GFP_KERNEL);
+	w = kzalloc(sizeof(struct cpumask), GFP_ATOMIC);
 	if (!w) {
 		ret = -ENOMEM;
 		goto out;
@@ -172,11 +172,12 @@ static void ethblk_worker_pool_rps_reconfig(struct timer_list *tl)
 	if (rps != ETHBLK_WORKER_RPS_AUTO)
 		return;
 
-	in_cpumask = kzalloc(sizeof(struct cpumask), GFP_KERNEL);
+	/* in atomic context */
+	in_cpumask = kzalloc(sizeof(struct cpumask), GFP_ATOMIC);
 	if (!in_cpumask)
 		goto out;
 
-	out_cpumask = kzalloc(sizeof(struct cpumask), GFP_KERNEL);
+	out_cpumask = kzalloc(sizeof(struct cpumask), GFP_ATOMIC);
 	if (!out_cpumask)
 		goto out;
 
