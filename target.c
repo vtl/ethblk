@@ -619,6 +619,7 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	}
 	d->drv_id = drv_id;
 	d->net_stat_enabled = net_stat;
+	uuid_gen(&d->uuid);
 
 	INIT_LIST_HEAD(&d->list);
 	INIT_LIST_HEAD(&d->initiators);
@@ -940,6 +941,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	rep_cfg_hdr->q_depth = cpu_to_be16(blk_queue_depth(cmd->d->bd->bd_queue));
 	rep_cfg_hdr->num_queues = cpu_to_be16(min(req_skb->dev->num_rx_queues, num_online_cpus()));
 	rep_cfg_hdr->num_sectors = cpu_to_be64(i_size_read(cmd->d->bd->bd_inode) >> 9);  /* FIXME send disk size and uuid */
+	uuid_copy((uuid_t *)rep_cfg_hdr->uuid, &cmd->d->uuid);
 
 	NET_STAT_INC(cmd->ini, cnt.rx_count);
 

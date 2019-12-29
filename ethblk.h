@@ -82,7 +82,7 @@ struct ethblk_cfg_hdr {
 	__be16 q_depth;
 	__be16 num_queues;
 	__be64 num_sectors;
-	__u8 uuid[32];
+	__u8 uuid[UUID_SIZE];
 } __attribute__((packed));
 
 static inline void ethblk_dump_mac(char *s, int len, unsigned char *mac)

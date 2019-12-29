@@ -117,7 +117,7 @@ struct ethblk_initiator_disk {
 	bool lat_stat_enabled;
 	struct ethblk_initiator_net_stat __percpu *stat;
 	char name[16];
-	char uuid[32];
+	uuid_t uuid;
 };
 
 struct ethblk_initiator_cmd {

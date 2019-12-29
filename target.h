@@ -11,6 +11,7 @@
 
 #include <linux/bio.h>
 #include <linux/blkdev.h>
+#include <linux/uuid.h>
 #include "ethblk.h"
 
 struct ethblk_target_disk_net_stat {
@@ -58,7 +59,7 @@ struct ethblk_target_disk {
 	struct completion destroy_completion;
 	char *backend_path;
 	int old_dma_alignment;
-	char ident[512];
+	uuid_t uuid;
 };
 
 enum ethblk_target_cmd_work_type {
