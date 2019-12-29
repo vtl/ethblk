@@ -931,8 +931,6 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
-		struct ethblk_initiator_disk_context *ctx = &cmd->d->ctx[cmd->hctx_idx];
-		int in_flight = max(1, (atomic_read(&ctx->in_flight) % cmd->t->num_queues));
 
 		/* make space for eth, ip and udp headers (ethblk hdr follows) */
 		skb_put(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) +
@@ -948,7 +946,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		ip->id = 0;
 		/* NOTE to fool Mellanox packet steering we have to
 		 * use semi-random source/dest ports */
-		udp->source = htons(eth_p_type + cmd->hctx_idx + (ctx->seq++ % in_flight));
+		udp->source = htons(eth_p_type + (cmd->hctx_idx % cmd->t->num_queues));
 		udp->dest = htons(eth_p_type);
 	} else {
 		skb->protocol = htons(eth_p_type);
