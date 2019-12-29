@@ -937,8 +937,8 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	rep_skb->dev = req_skb->dev;
 
 	rep_cfg_hdr = (struct ethblk_cfg_hdr *)(rep_hdr + 1);
-	rep_cfg_hdr->q_depth = cpu_to_be16(cmd->d->bd->bd_queue->queue_depth);
-	rep_cfg_hdr->num_queues = cpu_to_be16(1); /* FIXME */
+	rep_cfg_hdr->q_depth = cpu_to_be16(blk_queue_depth(cmd->d->bd->bd_queue));
+	rep_cfg_hdr->num_queues = cpu_to_be16(min(req_skb->dev->num_rx_queues, num_online_cpus()));
 	rep_cfg_hdr->num_sectors = cpu_to_be64(i_size_read(cmd->d->bd->bd_inode) >> 9);  /* FIXME send disk size and uuid */
 
 	NET_STAT_INC(cmd->ini, cnt.rx_count);

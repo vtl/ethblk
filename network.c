@@ -177,7 +177,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	rep_hdr = ethblk_network_skb_get_hdr(skb);
 
 	if ((rep_hdr->version != ETHBLK_PROTO_VERSION)) {
-		dprintk(err, "iface %s skb %px version 0x%x\n",
+		dprintk(debug, "iface %s skb %px version 0x%x\n",
 			ifp->name, skb, rep_hdr->version);
 		goto exit;
 	}

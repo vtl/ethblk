@@ -60,7 +60,7 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 				 unsigned char *addr, struct net_device *nd,
 				 bool l3);
 static int ethblk_initiator_disk_remove_target(struct ethblk_initiator_tgt *t);
-static void ethblk_initiator_disk_send_id(struct ethblk_initiator_disk *d);
+static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t);
 static void ethblk_initiator_tgt_free_deferred(struct work_struct *w);
 
 #define NET_STAT_ADD(t, var, val)                                              \
@@ -722,7 +722,7 @@ create:
 			d->name, iface, s);
 		return -EINVAL;
 	}
-	ethblk_initiator_disk_send_id(d);
+	ethblk_initiator_tgt_send_id(t);
 	return count;
 }
 
@@ -931,6 +931,8 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
+		struct ethblk_initiator_disk_context *ctx = &cmd->d->ctx[cmd->hctx_idx];
+		int in_flight = max(1, (atomic_read(&ctx->in_flight) % cmd->t->num_queues));
 
 		/* make space for eth, ip and udp headers (ethblk hdr follows) */
 		skb_put(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) +
@@ -946,8 +948,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		ip->id = 0;
 		/* NOTE to fool Mellanox packet steering we have to
 		 * use semi-random source/dest ports */
-		// FIXME make tunable
-		udp->source = htons(eth_p_type + (cmd->hctx_idx % ip_ports));
+		udp->source = htons(eth_p_type + cmd->hctx_idx + (ctx->seq++ % in_flight));
 		udp->dest = htons(eth_p_type);
 	} else {
 		skb->protocol = htons(eth_p_type);
@@ -1053,6 +1054,27 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 	ethblk_initiator_put_tgt(t);
 
 	return BLK_STS_OK;
+}
+
+static struct ethblk_initiator_tgt *
+ethblk_initiator_disk_find_tgt_by_id(struct ethblk_initiator_disk *d, int id)
+{
+	struct ethblk_initiator_tgt *t = NULL;
+	struct ethblk_initiator_tgt_array *ta;
+	int i;
+
+	rcu_read_lock();
+	ta = rcu_dereference(d->targets);
+
+	for (i = 0; i < ta->nr; i++) {
+		if (id == ta->tgts[i]->id) {
+			t = ta->tgts[i];
+			ethblk_initiator_get_tgt(t);
+			break;
+		}
+	}
+	rcu_read_unlock();
+	return t;
 }
 
 static struct ethblk_initiator_tgt *
@@ -1232,6 +1254,7 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(bd->rq);
 	blk_status_t status = BLK_STS_NOTSUPP;
 	unsigned long current_time;
+	struct ethblk_initiator_disk_context *ctx = &cmd->d->ctx[cmd->hctx_idx];
 
 	if (!cmd->d->online) {
 		status = BLK_STS_NEXUS;
@@ -1256,6 +1279,8 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 	cmd->time_queued = cmd->time_requeued = current_time = jiffies;
 
 	blk_mq_start_request(bd->rq);
+
+	atomic_inc(&ctx->in_flight);
 
 	if (!blk_rq_is_passthrough(bd->rq)) {
 		status = ethblk_initiator_cmd_rw(cmd, bd->last);
@@ -1516,6 +1541,7 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	for (i = 0; i <= num_hw_queues; i++) {
 		d->ctx[i].hctx_id = i;
 		d->ctx[i].current_target_idx = 0;
+		atomic_set(&d->ctx[i].in_flight, 0);
 	}
 
 	if (ethblk_initiator_disk_stat_init(d) != 0) {
@@ -1645,6 +1671,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 	d->net_stat_enabled = net_stat;
 	d->lat_stat_enabled = lat_stat;
 	d->online = true;
+	d->seq_id = 0;
 
 	ret = kobject_init_and_add(&d->kobj, &ethblk_initiator_disk_kobj_type,
 				   &ethblk_sysfs_initiator_kobj, "%s", d->name);
@@ -1820,6 +1847,8 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 	tn->lat_stat_enabled = d->lat_stat_enabled;
 	tn->l3 = l3;
 	tn->local_ip = ethblk_network_if_get_saddr(tn->nd);
+	tn->num_queues = 1;
+	tn->id = d->seq_id++;
 
 	if (tn->l3) {
 		tn->dest_ip = (__be32 __force) * (unsigned int *)addr;
@@ -1970,12 +1999,13 @@ static void ethblk_initiator_cmd_id_done(struct request *req,
 	blk_put_request(req);
 }
 
-static void ethblk_initiator_disk_send_id(struct ethblk_initiator_disk *d)
+static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 {
 	struct request *req;
 	struct ethblk_initiator_cmd *cmd;
+	struct ethblk_initiator_disk *d = t->d;
 
-	dprintk(info, "ID for disk %s\n", d->name);
+	dprintk(info, "ID for disk %s tgt %s\n", d->name, t->name);
 	req = blk_mq_alloc_request(d->queue, REQ_OP_DRV_IN, 0);
 	if (!req) {
 		dprintk(err, "can't alloc blk_mq request!\n");
@@ -1984,6 +2014,7 @@ static void ethblk_initiator_disk_send_id(struct ethblk_initiator_disk *d)
 
 	cmd = blk_mq_rq_to_pdu(req);
 	cmd->ethblk_hdr.op = ETHBLK_OP_ID;
+	cmd->ethblk_hdr.lba = t->id;
 
 	blk_execute_rq_nowait(d->queue, NULL, req, 0,
 			      ethblk_initiator_cmd_id_done);
@@ -2025,7 +2056,7 @@ void ethblk_initiator_discover_response(struct sk_buff *skb)
 			goto bail;
 	}
 
-	ethblk_initiator_disk_send_id(d);
+	ethblk_initiator_tgt_send_id(t);
 bail:
 	ethblk_initiator_put_disk(d);
 out_skb:
@@ -2034,20 +2065,36 @@ out_skb:
 
 static void
 ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
-				 struct ethblk_cfg_hdr *cfg)
+				 struct ethblk_hdr *rep_hdr)
 {
 	struct ethblk_initiator_disk *d = cmd->d;
+	struct ethblk_initiator_tgt *t;
+	struct ethblk_cfg_hdr *cfg = (struct ethblk_cfg_hdr *)(rep_hdr + 1);
 	sector_t ssize = be64_to_cpu(cfg->num_sectors);
-
-	memcpy(d->uuid, cfg->uuid, sizeof(cfg->uuid));
+	int tgt_id = rep_hdr->lba;
 
 	if (d->ssize != ssize) {
 		dprintk(info, "disk %s new size %llu sectors\n", d->name,
 			(long long)ssize);
+		d->ssize = ssize;
+		set_capacity(d->gd, ssize);
+		schedule_work(&d->cap_work);
 	}
-	d->ssize = ssize;
-	set_capacity(d->gd, ssize);
-	schedule_work(&d->cap_work);
+
+	t = ethblk_initiator_disk_find_tgt_by_id(d, tgt_id);
+	if (t) {
+		int num_queues = max(1, (int)be16_to_cpu(cfg->num_queues));
+		int q_depth = max(1, (int)be16_to_cpu(cfg->q_depth));
+
+		dprintk(info, "disk %s tgt %s q_depth %d num_queues %d uuid %pU\n",
+			d->name, t->name, q_depth, num_queues, cfg->uuid);
+// FIXME if d->uuid mismatesh then kill the tgt
+//	memcpy(d->uuid, cfg->uuid, sizeof(cfg->uuid));
+		t->num_queues = num_queues;
+		ethblk_initiator_put_tgt(t);
+	} else {
+		dprintk(err, "disk %s can't find tgt id %d\n", d->name, tgt_id);
+	}
 }
 
 static int ethblk_skb_copy_to_cmd(struct sk_buff *skb,
@@ -2078,6 +2125,7 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 {
 	struct ethblk_hdr *rep_hdr, *req_hdr;
 	int n;
+	struct ethblk_initiator_disk_context *ctx = &cmd->d->ctx[cmd->hctx_idx];
 
 	req_hdr = &cmd->ethblk_hdr;
 
@@ -2126,7 +2174,7 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 				cmd->d->name, skb->len, sizeof(struct ethblk_cfg_hdr));
 			break;
 		}
-		ethblk_initiator_cmd_id_complete(cmd, (struct ethblk_cfg_hdr *)(rep_hdr + 1));
+		ethblk_initiator_cmd_id_complete(cmd, rep_hdr);
 		break;
 	default:
 		dprintk(info, "%s: unknown op %d in reply\n",
@@ -2135,6 +2183,7 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 	}
 
 out:
+	atomic_dec(&ctx->in_flight);
 	return;
 }
 

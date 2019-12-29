@@ -52,6 +52,7 @@ struct ethblk_initiator_disk_tgt_context {
 
 struct ethblk_initiator_tgt {
 	struct list_head list;
+	int id;
 	bool l3;
 	unsigned char mac[ETH_ALEN];
 	__be32 local_ip;
@@ -65,18 +66,21 @@ struct ethblk_initiator_tgt {
 	struct work_struct free_work;
 	struct ethblk_initiator_disk_tgt_context *ctx;
 	int relax_timeout_rearm;
+	int num_queues;
 	bool net_stat_enabled;
 	bool lat_stat_enabled;
 	struct ethblk_initiator_net_stat __percpu *stat;
 	char name[ETH_ALEN * 3 + IFNAMSIZ];
 };
 
-#define CMD_TIMEOUT_S 30
+#define CMD_TIMEOUT_S 5
 #define CMD_RETRY_JIFFIES (HZ / 4) /* 250 ms FIXME make RTO */
 
 struct ethblk_initiator_disk_context {
 	int hctx_id;
 	int current_target_idx;
+	unsigned seq;
+	atomic_t in_flight __attribute__((aligned(64)));
 } __attribute__((aligned(64)));
 
 #define ETHBLK_MAX_TARGETS_PER_DISK 64
