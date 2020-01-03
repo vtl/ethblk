@@ -139,6 +139,7 @@ ethblk_initiator_cmd_dump_to_string(struct ethblk_initiator_cmd *cmd, char *ptr,
 		break;
 	case REQ_OP_DRV_IN:
 		req_name = "PRIVATE";
+		has_lba = 1;
 		break;
 	default:
 		req_name = "???";
@@ -151,8 +152,9 @@ ethblk_initiator_cmd_dump_to_string(struct ethblk_initiator_cmd *cmd, char *ptr,
 		       cmd->retries, cmd->d->name, req_op(req), req_name);
 	if (has_lba) {
 		snprintf(ptr + ret, n - ret, " lba %llu len %u",
-			 (unsigned long long)blk_rq_pos(req),
-			 blk_rq_bytes(req));
+			 cmd->ethblk_hdr.lba, cmd->ethblk_hdr.num_sectors);
+			 /* (unsigned long long)blk_rq_pos(req), */
+			 /* blk_rq_bytes(req)); */
 	}
 }
 
@@ -1991,8 +1993,8 @@ out:
 	return ret;
 }
 
-static void ethblk_initiator_cmd_id_done(struct request *req,
-					 blk_status_t error)
+static void ethblk_initiator_cmd_drv_in_done(struct request *req,
+					     blk_status_t error)
 {
 	blk_put_request(req);
 }
@@ -2015,7 +2017,32 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 	cmd->ethblk_hdr.lba = t->id;
 
 	blk_execute_rq_nowait(d->queue, NULL, req, 0,
-			      ethblk_initiator_cmd_id_done);
+			      ethblk_initiator_cmd_drv_in_done);
+}
+
+static void ethblk_initiator_tgt_checksum(struct ethblk_initiator_tgt *t,
+					  sector_t lba,
+					  ssize_t sectors)
+{
+	struct request *req;
+	struct ethblk_initiator_cmd *cmd;
+	struct ethblk_initiator_disk *d = t->d;
+
+	dprintk(info, "CHECKSUM for disk %s tgt %s lba %llu sectors %lu\n",
+		d->name, t->name, lba, sectors);
+	req = blk_mq_alloc_request(d->queue, REQ_OP_DRV_IN, 0);
+	if (!req) {
+		dprintk(err, "can't alloc blk_mq request!\n");
+		return;
+	}
+
+	cmd = blk_mq_rq_to_pdu(req);
+	cmd->ethblk_hdr.op = ETHBLK_OP_CHECKSUM;
+	cmd->ethblk_hdr.lba = lba;
+	cmd->ethblk_hdr.num_sectors = sectors;
+
+	blk_execute_rq_nowait(d->queue, NULL, req, 0,
+			      ethblk_initiator_cmd_drv_in_done);
 }
 
 void ethblk_initiator_discover_response(struct sk_buff *skb)
@@ -2089,6 +2116,9 @@ ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
 // FIXME if d->uuid mismatesh then kill the tgt
 //	memcpy(d->uuid, cfg->uuid, sizeof(cfg->uuid));
 		t->num_queues = num_queues;
+
+// FIXME TEST		ethblk_initiator_tgt_checksum(t, 0, 128);
+
 		ethblk_initiator_put_tgt(t);
 	} else {
 		dprintk(err, "disk %s can't find tgt id %d\n", d->name, tgt_id);
@@ -2116,6 +2146,21 @@ static int ethblk_skb_copy_to_cmd(struct sk_buff *skb,
 		off += bv.bv_len;
 	}
 	return off;
+}
+
+static void ethblk_initiator_checksum_cmd_complete(struct ethblk_initiator_cmd *cmd,
+						   struct ethblk_hdr *rep_hdr)
+{
+	__u32 *rep_sha_dg = (__u32 *)(rep_hdr + 1);
+	__u32 sha_dg[SHA_DIGEST_WORDS];
+	char s[SHA_DIGEST_WORDS * 4 * 2 + 1] = { 0 };
+	int i;
+
+	for (i = 0 ; i < SHA_DIGEST_WORDS; i++)
+		sha_dg[i] = cpu_to_be32(rep_sha_dg[i]);
+
+	bin2hex(s, (char *)sha_dg, SHA_DIGEST_WORDS * 4);
+	DEBUG_INI_CMD(debug, cmd, "checksum %s", s);
 }
 
 static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
@@ -2173,6 +2218,9 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 			break;
 		}
 		ethblk_initiator_cmd_id_complete(cmd, rep_hdr);
+		break;
+	case ETHBLK_OP_CHECKSUM:
+		ethblk_initiator_checksum_cmd_complete(cmd, rep_hdr);
 		break;
 	default:
 		dprintk(info, "%s: unknown op %d in reply\n",
@@ -2343,7 +2391,6 @@ static void ethblk_initiator_discover(void)
 		ethblk_network_xmit_skb(skb);
 	}
 }
-
 
 void ethblk_initiator_handle_cfg_change(struct sk_buff *in_skb)
 {
