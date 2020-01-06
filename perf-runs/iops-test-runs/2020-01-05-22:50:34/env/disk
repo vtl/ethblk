@@ -1,0 +1,1 @@
+modprobe null_blk bs=512 nr_devices=1 hw_queue_depth=128 queue_mode=0 submit_queues=32

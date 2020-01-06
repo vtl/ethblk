@@ -1,0 +1,171 @@
+$ uname -a
+Linux epyc 5.4.0+ #6 SMP Tue Nov 26 16:11:15 UTC 2019 x86_64 x86_64 x86_64 GNU/Linux
+
+$ cat /proc/cmdline 
+root=/dev/mapper/vg_epyc-lv_root ro maybe-ubiquity crashkernel=640M noibrs noibpb nopti nospectre_v2 nospectre_v1 l1tf=off nospec_store_bypass_disable no_stf_barrier mds=off mitigations=off pci=reallo
+
+$ lscpu
+Architecture:        x86_64
+CPU op-mode(s):      32-bit, 64-bit
+Byte Order:          Little Endian
+CPU(s):              32
+On-line CPU(s) list: 0-31
+Thread(s) per core:  2
+Core(s) per socket:  16
+Socket(s):           1
+NUMA node(s):        4
+Vendor ID:           AuthenticAMD
+CPU family:          23
+Model:               1
+Model name:          AMD EPYC 7281 16-Core Processor
+Stepping:            2
+CPU MHz:             1199.864
+CPU max MHz:         2100.0000
+CPU min MHz:         1200.0000
+BogoMIPS:            4199.51
+Virtualization:      AMD-V
+L1d cache:           32K
+L1i cache:           64K
+L2 cache:            512K
+L3 cache:            4096K
+NUMA node0 CPU(s):   0-3,16-19
+NUMA node1 CPU(s):   4-7,20-23
+NUMA node2 CPU(s):   8-11,24-27
+NUMA node3 CPU(s):   12-15,28-31
+Flags:               fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl nonstop_tsc cpuid extd_apicid amd_dcm aperfmperf pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb hw_pstate ssbd ibpb vmmcall fsgsbase bmi1 avx2 smep bmi2 rdseed adx smap clflushopt sha_ni xsaveopt xsavec xgetbv1 xsaves clzero irperf xsaveerptr arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif overflow_recov succor smca
+
+$ numactl -H
+available: 4 nodes (0-3)
+node 0 cpus: 0 1 2 3 16 17 18 19
+node 0 size: 7215 MB
+node 0 free: 5100 MB
+node 1 cpus: 4 5 6 7 20 21 22 23
+node 1 size: 8060 MB
+node 1 free: 5455 MB
+node 2 cpus: 8 9 10 11 24 25 26 27
+node 2 size: 8060 MB
+node 2 free: 7083 MB
+node 3 cpus: 12 13 14 15 28 29 30 31
+node 3 size: 8061 MB
+node 3 free: 2663 MB
+node distances:
+node   0   1   2   3 
+  0:  10  16  16  16 
+  1:  16  10  16  16 
+  2:  16  16  10  16 
+  3:  16  16  16  10 
+
+$ sudo ethtool enp33s0
+Settings for enp33s0:
+	Supported ports: [ FIBRE ]
+	Supported link modes:   1000baseKX/Full 
+	                        10000baseKR/Full 
+	                        40000baseKR4/Full 
+	                        40000baseCR4/Full 
+	                        40000baseSR4/Full 
+	                        40000baseLR4/Full 
+	                        25000baseCR/Full 
+	                        25000baseKR/Full 
+	                        25000baseSR/Full 
+	                        50000baseCR2/Full 
+	                        50000baseKR2/Full 
+	                        100000baseKR4/Full 
+	                        100000baseSR4/Full 
+	                        100000baseCR4/Full 
+	                        100000baseLR4_ER4/Full 
+	Supported pause frame use: Symmetric
+	Supports auto-negotiation: Yes
+	Supported FEC modes: None RS
+	Advertised link modes:  1000baseKX/Full 
+	                        10000baseKR/Full 
+	                        40000baseKR4/Full 
+	                        40000baseCR4/Full 
+	                        40000baseSR4/Full 
+	                        40000baseLR4/Full 
+	                        25000baseCR/Full 
+	                        25000baseKR/Full 
+	                        25000baseSR/Full 
+	                        50000baseCR2/Full 
+	                        50000baseKR2/Full 
+	                        100000baseKR4/Full 
+	                        100000baseSR4/Full 
+	                        100000baseCR4/Full 
+	                        100000baseLR4_ER4/Full 
+	Advertised pause frame use: Symmetric
+	Advertised auto-negotiation: Yes
+	Advertised FEC modes: RS
+	Link partner advertised link modes:  Not reported
+	Link partner advertised pause frame use: No
+	Link partner advertised auto-negotiation: Yes
+	Link partner advertised FEC modes: Not reported
+	Speed: 100000Mb/s
+	Duplex: Full
+	Port: FIBRE
+	PHYAD: 0
+	Transceiver: internal
+	Auto-negotiation: on
+	Supports Wake-on: d
+	Wake-on: d
+	Current message level: 0x00000004 (4)
+			       link
+	Link detected: yes
+
+$ sudo ethtool -k enp33s0
+Features for enp33s0:
+rx-checksumming: on
+tx-checksumming: on
+	tx-checksum-ipv4: off [fixed]
+	tx-checksum-ip-generic: on
+	tx-checksum-ipv6: off [fixed]
+	tx-checksum-fcoe-crc: off [fixed]
+	tx-checksum-sctp: off [fixed]
+scatter-gather: on
+	tx-scatter-gather: on
+	tx-scatter-gather-fraglist: off [fixed]
+tcp-segmentation-offload: on
+	tx-tcp-segmentation: on
+	tx-tcp-ecn-segmentation: off [fixed]
+	tx-tcp-mangleid-segmentation: off
+	tx-tcp6-segmentation: on
+udp-fragmentation-offload: off
+generic-segmentation-offload: on
+generic-receive-offload: on
+large-receive-offload: off
+rx-vlan-offload: on
+tx-vlan-offload: on
+ntuple-filters: off
+receive-hashing: on
+highdma: on [fixed]
+rx-vlan-filter: on
+vlan-challenged: off [fixed]
+tx-lockless: off [fixed]
+netns-local: off [fixed]
+tx-gso-robust: off [fixed]
+tx-fcoe-segmentation: off [fixed]
+tx-gre-segmentation: on
+tx-gre-csum-segmentation: on
+tx-ipxip4-segmentation: off [fixed]
+tx-ipxip6-segmentation: off [fixed]
+tx-udp_tnl-segmentation: on
+tx-udp_tnl-csum-segmentation: on
+tx-gso-partial: on
+tx-sctp-segmentation: off [fixed]
+tx-esp-segmentation: off [fixed]
+tx-udp-segmentation: on
+fcoe-mtu: off [fixed]
+tx-nocache-copy: off
+loopback: off [fixed]
+rx-fcs: off
+rx-all: off
+tx-vlan-stag-hw-insert: on
+rx-vlan-stag-hw-parse: off [fixed]
+rx-vlan-stag-filter: on [fixed]
+l2-fwd-offload: off [fixed]
+hw-tc-offload: off [fixed]
+esp-hw-offload: off [fixed]
+esp-tx-csum-hw-offload: off [fixed]
+rx-udp_tunnel-port-offload: on
+tls-hw-tx-offload: off [fixed]
+tls-hw-rx-offload: off [fixed]
+rx-gro-hw: off [fixed]
+tls-hw-record: off [fixed]
