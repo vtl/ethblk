@@ -5,7 +5,7 @@ tgt=0  # should be 1 on target and 0 on initiator
 
 tgt_nic=enp33s0
 tgt_ip=192.168.50.3
-tgt_disk=/dev/mapper/vg_nvme-bar
+tgt_disk=/dev/nullb0
 
 ini_nic=enp193s0
 ini_ip=192.168.50.2
@@ -31,18 +31,21 @@ systemctl stop tuned
 #mlnx_tune -p HIGH_THROUGHPUT
 
 rmmod ethblk
-insmod ethblk.ko initiator=$ini target=$tgt disk_major=154 queue_depth=128 rps=0 ip_ports=64 force_dma_alignment=3
+insmod ethblk.ko initiator=$ini target=$tgt disk_major=154 queue_depth=256 rps=$tgt ip_ports=256 force_dma_alignment=3 lat_stat=0
 # uncomment for debug
 #echo module ethblk +p > /sys/kernel/debug/dynamic_debug/control
 
 if [[ $ini -eq 1 ]]; then
     ifconfig $ini_nic $ini_ip mtu 9216
-    echo 0 > /sys/kernel/ethblk/initiator/create_disk
-    echo $tgt_ip $ini_nic > /sys/kernel/ethblk/initiator/eda0/targets/add
+    echo 1 > /sys/kernel/ethblk/initiator/discover
 fi
 
 if [[ $tgt -eq 1 ]]; then
     ifconfig $tgt_nic $tgt_ip mtu 9216
-    echo 0 $tgt_disk > /sys/kernel/ethblk/target/create_disk
-    echo $ini_mac $tgt_nic > /sys/kernel/ethblk/target/eda0/initiators/add
+    for i in {0..3}; do
+        echo $i /dev/nvme${i}n1 > /sys/kernel/ethblk/target/create_disk
+        echo $ini_mac $tgt_nic > /sys/kernel/ethblk/target/eda${i}/initiators/add
+    done
+    echo 4 $tgt_disk > /sys/kernel/ethblk/target/create_disk
+    echo $ini_mac $tgt_nic > /sys/kernel/ethblk/target/eda4/initiators/add
 fi
