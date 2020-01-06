@@ -684,6 +684,13 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 		goto out_d_inis_kobj;
 	}
 
+	ret = bioset_init(&d->bs, blk_queue_depth(d->bd->bd_queue) * num_online_cpus(),
+			  0, BIOSET_NEED_BVECS);
+	if (ret) {
+		dprintk(err, "disk %s can't init bioset: %d\n", d->name, ret);
+		goto out_sysfs_group;
+	}
+
 	d->backend_path = kstrdup(path, GFP_KERNEL);
 
 	list_add_tail_rcu(&d->list, &ethblk_target_disks);
@@ -691,6 +698,8 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	ret = 0;
 	goto out;
 
+out_sysfs_group:
+	sysfs_remove_group(&d->inis_kobj, &ethblk_target_disk_inis_group);
 out_d_inis_kobj:
 	kobject_del(&d->inis_kobj);
 out_sysfs:
@@ -733,6 +742,7 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 	   refcounts to the disk */
 	free_percpu(d->stat);
 	kfree(d->backend_path);
+	bioset_exit(&d->bs);
 	complete(&d->destroy_completion);
 	kfree_rcu(d, rcu);
 	dprintk(info, "disk %px eda%d freed\n", d, drv_id);
@@ -1068,7 +1078,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 		goto out_err;
 	}
 // FIXME bio_alloc_bioset
-	bio = bio_alloc(GFP_ATOMIC, sgn);
+	bio = bio_alloc_bioset(GFP_ATOMIC, sgn, &d->bs);
 	if (bio) {
 		int i, ret;
 		struct scatterlist *sg;
@@ -1300,7 +1310,7 @@ static void ethblk_target_checksum_cmd_iter(struct ethblk_target_checksum_cmd *c
 		char s[SHA_DIGEST_WORDS * 4 * 2 + 1] = { 0 };
 
 		bin2hex(s, (char *)cs_cmd->sha_dg, SHA_DIGEST_WORDS * 4);
-		dprintk(info, "checksum %s\n", s);
+		dprintk(debug, "checksum %s\n", s);
 
 		for (i = 0 ; i < SHA_DIGEST_WORDS; i++)
 			p[i] = cpu_to_be32(cs_cmd->sha_dg[i]);

@@ -48,6 +48,7 @@ struct ethblk_target_disk {
 	struct list_head initiators;
 	char name[16];
 	struct block_device *bd;
+	struct bio_set bs;
 	struct mutex initiator_lock;
 	struct percpu_ref ref;
 	struct kobject kobj;

@@ -2021,14 +2021,14 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 }
 
 static void ethblk_initiator_tgt_checksum(struct ethblk_initiator_tgt *t,
-					  sector_t lba,
-					  ssize_t sectors)
+					  u64 lba,
+					  int sectors)
 {
 	struct request *req;
 	struct ethblk_initiator_cmd *cmd;
 	struct ethblk_initiator_disk *d = t->d;
 
-	dprintk(info, "CHECKSUM for disk %s tgt %s lba %llu sectors %lu\n",
+	dprintk(info, "CHECKSUM for disk %s tgt %s lba %llu sectors %u\n",
 		d->name, t->name, lba, sectors);
 	req = blk_mq_alloc_request(d->queue, REQ_OP_DRV_IN, 0);
 	if (!req) {
