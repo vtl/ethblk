@@ -1,0 +1,37 @@
+#!/bin/bash
+
+runtime=15
+dir=$0-runs/`date +%F-%T`
+mkdir -p $dir
+
+disks="/dev/eda4 /dev/nvme0n1"
+
+io_patterns="randread"
+queue_sizes="1 2 4 8 16 32 64 128 256"
+workers="1 2 4 8 16 32"
+block_sizes="512 4096 8192 16384 65536"
+
+nr_tests=$((
+        `wc -w <<< "$disks"` *
+        `wc -w <<< "$io_patterns"` *
+        `wc -w <<< "$queue_sizes"` *
+        `wc -w <<< "$workers"` *
+        `wc -w <<< "$block_sizes"`))
+
+time=$(( runtime * nr_tests ))
+i=1
+for disk in $disks; do
+for rw in $io_patterns; do
+for bs in $block_sizes; do
+for iodepth in $queue_sizes; do
+for numjobs in $workers; do
+    echo "[${i}/${nr_tests}] $time secs" disk=$disk rw=$rw bs=$bs iodepth=$iodepth numjobs=$numjobs
+    i=$(( i + 1 ))
+    time=$(( time - runtime ))
+    name=`basename $disk`-$rw-$bs-$iodepth-$numjobs
+    sudo perf stat -ddd -a 2>> $dir/$name -- fio --filename=$disk --rw=$rw --bs=$bs --iodepth=$iodepth --numjobs=$numjobs --runtime=$runtime --thread --direct=1 --ioengine=io_uring --fixedbufs --name=$name --time_based --group_reporting --output-format=json >> $dir/$name
+done
+done
+done
+done
+done

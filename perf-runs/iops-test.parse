@@ -1,0 +1,41 @@
+#!/bin/bash
+
+dir=$1
+
+if [[ -z $dir ]]; then
+    echo Usage:
+    echo $0 iops-test.runs/2020-01-04-14:36:55
+    exit 1
+fi
+
+disks="/dev/eda4 /dev/nvme0n1"
+rw="randread"
+queue_sizes="1 2 4 8 16 32 64 128 256"
+workers="1 2 4 8 16 32"
+block_sizes="512 4096 8192 16384 65536"
+
+round()
+{
+    echo $(printf %.$2f $(echo "scale=$2;(((10^$2)*$1)+0.5)/(10^$2)" | bc))
+}
+
+(
+#numjobs iodepth IOPS BW CYCLES/IO"
+for bs in $block_sizes; do
+for numjobs in $workers; do
+for iodepth in $queue_sizes; do
+    echo -n "$numjobs $iodepth "
+for disk in $disks; do
+    name=`basename $disk`-$rw-$bs-$iodepth-$numjobs
+    IOPS=$(($(round `jq '.jobs[0].read.iops' $dir/$name 2>/dev/null` 0) / 1))
+    BW=$(($(round `jq '.jobs[0].read.bw' $dir/$name 2>/dev/null` 0) / 1))
+    CYCLES=$(awk '{if ($2 == "cycles") {print gsub(",","")$1}}' $dir/$name)
+    echo -n $((IOPS / 1000)) " " $((BW / 1000)) " " $((CYCLES / IOPS / 1000)) " "
+done
+echo
+done | tee gnuplot-$bs-$numjobs.dat
+gnuplot -e bs=$bs -e numjobs=$numjobs iops-bs-numjobs.gnu
+done > gnuplot-$bs.dat
+gnuplot -e bs=$bs 3d-iops-bs.gnu
+done
+)
