@@ -225,9 +225,7 @@ static void ethblk_target_announce(struct ethblk_target_disk_ini *ini)
 	ether_addr_copy(req_hdr->src, ini->nd->dev_addr);
 
 	req_hdr->type = cpu_to_be16(eth_p_type);
-	req_hdr->version = ETHBLK_PROTO_VERSION;
-	req_hdr->response = 0;
-	req_hdr->status = 0;
+	ETHBLK_HDR_SET_FLAGS(req_hdr, ETHBLK_PROTO_VERSION, 0, 0);
 	req_hdr->drv_id = cpu_to_be16(ini->d->drv_id);
 	req_hdr->op = ETHBLK_OP_CFG_CHANGE;
 
@@ -937,9 +935,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	ether_addr_copy(rep_hdr->dst, req_hdr->src);
 
 	rep_hdr->type = cpu_to_be16(eth_p_type);
-	rep_hdr->version = ETHBLK_PROTO_VERSION;
-	rep_hdr->response = 1;
-	rep_hdr->status = 0;
+	ETHBLK_HDR_SET_FLAGS(rep_hdr, ETHBLK_PROTO_VERSION, 0, 1);
 	rep_hdr->drv_id = cpu_to_be16(cmd->d->drv_id);
 	rep_hdr->tag = req_hdr->tag;
 	rep_hdr->op = req_hdr->op;
@@ -1044,9 +1040,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	ether_addr_copy(rep_hdr->dst, req_hdr->src);
 
 	rep_hdr->type = cpu_to_be16(eth_p_type);
-	rep_hdr->version = ETHBLK_PROTO_VERSION;
-	rep_hdr->response = 1;
-	rep_hdr->status = 0;
+	ETHBLK_HDR_SET_FLAGS(rep_hdr, ETHBLK_PROTO_VERSION, 0, 1);
 	rep_hdr->drv_id = req_hdr->drv_id;
 	rep_hdr->tag = req_hdr->tag;
 	rep_hdr->op = req_hdr->op;
@@ -1134,7 +1128,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	return;
 out_err:
 	NET_STAT_INC(cmd->ini, cnt.err_count);
-	rep_hdr->status = 1;
+	ETHBLK_HDR_SET_STATUS(rep_hdr, 1);
 	ethblk_target_send_reply(cmd);
 	return;
 
@@ -1173,7 +1167,7 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 
 		if (bio->bi_status != BLK_STS_OK) {
 			/* FIXME drop payload, don't send it over network */
-			rep_hdr->status = bio->bi_status;
+			ETHBLK_HDR_SET_STATUS(rep_hdr, bio->bi_status);
 		}
 	}
 
@@ -1252,7 +1246,7 @@ static void ethblk_target_cmd_checksum_complete(struct bio *bio)
 	return;
 error:
 	NET_STAT_INC(cs_cmd->cmd->ini, cnt.err_count);
-	cs_cmd->rep_hdr->status = 1;
+	ETHBLK_HDR_SET_STATUS(cs_cmd->rep_hdr, 1);
 	ethblk_target_send_reply(cs_cmd->cmd);
 	ethblk_target_checksum_cmd_free(cs_cmd);
 }
@@ -1337,7 +1331,7 @@ static void ethblk_target_checksum_cmd_iter(struct ethblk_target_checksum_cmd *c
 	return;
 out_err:
 	NET_STAT_INC(cs_cmd->cmd->ini, cnt.err_count);
-	cs_cmd->rep_hdr->status = 1;
+	ETHBLK_HDR_SET_STATUS(cs_cmd->rep_hdr, 1);
 	ethblk_target_send_reply(cs_cmd->cmd);
 }
 
@@ -1413,9 +1407,7 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 	ether_addr_copy(rep_hdr->dst, req_hdr->src);
 
 	rep_hdr->type = cpu_to_be16(eth_p_type);
-	rep_hdr->version = ETHBLK_PROTO_VERSION;
-	rep_hdr->response = 1;
-	rep_hdr->status = 0;
+	ETHBLK_HDR_SET_FLAGS(rep_hdr, ETHBLK_PROTO_VERSION, 0, 1);
 	rep_hdr->drv_id = req_hdr->drv_id;
 	rep_hdr->tag = req_hdr->tag;
 	rep_hdr->op = req_hdr->op;
@@ -1455,7 +1447,7 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 	return;
 out_err:
 	NET_STAT_INC(cmd->ini, cnt.err_count);
-	rep_hdr->status = 1;
+	ETHBLK_HDR_SET_STATUS(rep_hdr, 1);
 	ethblk_target_send_reply(cmd);
 	if (cs_cmd)
 		kfree(cs_cmd);
@@ -1611,9 +1603,7 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 		ether_addr_copy(rep_hdr->dst, req_hdr->src);
 		/* FIXME init hdr function? */
 		rep_hdr->type = cpu_to_be16(eth_p_type);
-		rep_hdr->version = ETHBLK_PROTO_VERSION;
-		rep_hdr->response = 1;
-		rep_hdr->status = 0;
+		ETHBLK_HDR_SET_FLAGS(rep_hdr, ETHBLK_PROTO_VERSION, 0, 1);
 		rep_hdr->drv_id = cpu_to_be16(d->drv_id);
 		rep_hdr->tag = rep_hdr->tag;
 		rep_hdr->op = req_hdr->op;

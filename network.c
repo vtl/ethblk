@@ -160,6 +160,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	struct ethblk_hdr *rep_hdr;
 	int ret = NET_RX_DROP;
 	struct sk_buff *old_skb = skb;
+	bool response;
 
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (skb == NULL)
@@ -184,10 +185,11 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	skb_push(skb, ETH_HLEN);
 
 	rep_hdr = ethblk_network_skb_get_hdr(skb);
+	response = ETHBLK_HDR_GET_RESPONSE(rep_hdr);
 
-	if ((rep_hdr->version != ETHBLK_PROTO_VERSION)) {
-		dprintk(debug, "iface %s skb %px version 0x%x\n",
-			ifp->name, skb, rep_hdr->version);
+	if ((ETHBLK_HDR_GET_VERSION(rep_hdr) != ETHBLK_PROTO_VERSION)) {
+		dprintk(debug, "iface %s skb %px version %lu\n",
+			ifp->name, skb, ETHBLK_HDR_GET_VERSION(rep_hdr));
 		goto exit;
 	}
 
@@ -198,10 +200,10 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	case ETHBLK_OP_CHECKSUM:
 		dprintk(debug, "iface %s skb %px L%d ETHBLK IO cmd\n", ifp->name, skb,
 			ethblk_network_skb_is_l2(skb) ? 2 : 3);
-		if (target_mode && !rep_hdr->response) {
+		if (target_mode && !response) {
 			ethblk_target_cmd_deferred(skb);
 			skb = NULL;
-		} else if (initiator_mode && rep_hdr->response) {
+		} else if (initiator_mode && response) {
 			ethblk_initiator_cmd_deferred(
 				skb,
 				ETHBLK_WORKER_CB_TYPE_INITIATOR_IO);
@@ -210,10 +212,10 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 		break;
 	case ETHBLK_OP_DISCOVER:
 		dprintk(debug, "iface %s skb %px DISCOVER cmd\n", ifp->name, skb);
-		if (target_mode && !rep_hdr->response) {
+		if (target_mode && !response) {
 			ethblk_target_cmd_deferred(skb);
 			skb = NULL;
-		} else if (initiator_mode && rep_hdr->response) {
+		} else if (initiator_mode && response) {
 			ethblk_initiator_cmd_deferred(
 				skb,
 				ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER);
@@ -222,7 +224,7 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 		break;
 	case ETHBLK_OP_CFG_CHANGE:
 		dprintk(debug, "iface %s skb %px CFG_CHANGE cmd\n", ifp->name, skb);
-		if (initiator_mode && !rep_hdr->response) {
+		if (initiator_mode && !response) {
 			ethblk_initiator_handle_cfg_change(skb);
 			skb = NULL;
 		}

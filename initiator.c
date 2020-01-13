@@ -1001,9 +1001,7 @@ static void ethblk_initiator_cmd_hdr_init(struct ethblk_initiator_cmd *cmd)
 	ether_addr_copy(h->src, t->nd->dev_addr);
 	ether_addr_copy(h->dst, t->mac);
 	h->type = cpu_to_be16(eth_p_type);
-	h->version = ETHBLK_PROTO_VERSION;
-	h->status = 0;
-	h->response = 0;
+	ETHBLK_HDR_SET_FLAGS(h, ETHBLK_PROTO_VERSION, 0, 0);
 	h->drv_id = cpu_to_be16(d->drv_id);
 	h->tag = cpu_to_be32(host_tag);
 }
@@ -2175,10 +2173,10 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 
 	rep_hdr = (struct ethblk_hdr *)skb->data;
 	skb_pull(skb, sizeof(struct ethblk_hdr));
-	if (rep_hdr->status) {
-		dprintk_ratelimit(err, "%s: IO error=%2.2x cmd=%2.2Xh\n",
-				  cmd->d->name, rep_hdr->status, rep_hdr->op);
+	if (ETHBLK_HDR_GET_STATUS(rep_hdr)) {
 		cmd->status = BLK_STS_IOERR;
+		DEBUG_INI_CMD(err, cmd, "IO error %lu",
+			      ETHBLK_HDR_GET_STATUS(rep_hdr));
 		goto out;
 	}
 
@@ -2359,9 +2357,7 @@ static void ethblk_initiator_prepare_cfg_pkts(unsigned short drv_id,
 		ether_addr_copy(req_hdr->src, ifp->dev_addr);
 
 		req_hdr->type = cpu_to_be16(eth_p_type);
-		req_hdr->version = ETHBLK_PROTO_VERSION;
-		req_hdr->response = 0;
-		req_hdr->status = 0;
+		ETHBLK_HDR_SET_FLAGS(req_hdr, ETHBLK_PROTO_VERSION, 0, 0);
 		req_hdr->drv_id = cpu_to_be16(drv_id);
 		req_hdr->op = ETHBLK_OP_DISCOVER;
 		/* FIXME send IP address as well  */
@@ -2408,9 +2404,7 @@ void ethblk_initiator_handle_cfg_change(struct sk_buff *in_skb)
 	ether_addr_copy(req_hdr->src, skb->dev->dev_addr);
 
 	req_hdr->type = cpu_to_be16(eth_p_type);
-	req_hdr->version = ETHBLK_PROTO_VERSION;
-	req_hdr->response = 0;
-	req_hdr->status = 0;
+	ETHBLK_HDR_SET_FLAGS(req_hdr, ETHBLK_PROTO_VERSION, 0, 0);
 	req_hdr->drv_id = in_hdr->drv_id;
 	req_hdr->op = ETHBLK_OP_DISCOVER;
 

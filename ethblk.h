@@ -9,6 +9,7 @@
 #define _ETHBLK_H_
 
 #include <linux/atomic.h>
+#include <linux/bitfield.h>
 #include <linux/etherdevice.h>
 #include <linux/inetdevice.h>
 #include <linux/ip.h>
@@ -63,20 +64,46 @@ extern bool initiator_mode;
 #define	ETHBLK_OP_CFG_CHANGE 4
 #define ETHBLK_OP_CHECKSUM 5
 
+#define ETHBLK_HDR_MASK_VERSION GENMASK(3, 0)
+#define ETHBLK_HDR_MASK_STATUS  GENMASK(6, 4)
+#define ETHBLK_HDR_MASK_RESPONSE BIT(7)
+
+#define ETHBLK_HDR_GET_VERSION(hdr) \
+	(FIELD_GET(ETHBLK_HDR_MASK_VERSION, hdr->flags[0]))
+#define	ETHBLK_HDR_SET_VERSION(hdr, x)		  \
+	(hdr->flags[0] &= ETHBLK_HDR_MASK_VERSION, \
+	 hdr->flags[0] |= FIELD_PREP(ETHBLK_HDR_MASK_VERSION, x))
+
+#define ETHBLK_HDR_GET_STATUS(hdr) \
+	(FIELD_GET(ETHBLK_HDR_MASK_STATUS, hdr->flags[0]))
+#define	ETHBLK_HDR_SET_STATUS(hdr, x)		  \
+	(hdr->flags[0] &= ETHBLK_HDR_MASK_STATUS, \
+	 hdr->flags[0] |= FIELD_PREP(ETHBLK_HDR_MASK_STATUS, x))
+
+#define ETHBLK_HDR_GET_RESPONSE(hdr) \
+	(FIELD_GET(ETHBLK_HDR_MASK_RESPONSE, hdr->flags[0]))
+#define	ETHBLK_HDR_SET_RESPONSE(hdr, x)		  \
+	(hdr->flags[0] &= ETHBLK_HDR_MASK_RESPONSE, \
+	 hdr->flags[0] |= FIELD_PREP(ETHBLK_HDR_MASK_RESPONSE, x))
+
+#define ETHBLK_HDR_SET_FLAGS(hdr, v, s, r)				\
+	(hdr->flags[0] =						\
+	 FIELD_PREP(ETHBLK_HDR_MASK_VERSION, v) |			\
+	 FIELD_PREP(ETHBLK_HDR_MASK_STATUS, s) |			\
+	 FIELD_PREP(ETHBLK_HDR_MASK_RESPONSE, r))
+
 struct ethblk_hdr {
 	__u8 dst[ETH_ALEN];
 	__u8 src[ETH_ALEN];
 	__be16 type;
-	__u8 version : 4;
-	__u8 status : 3;
-	__u8 response : 1;
+	__u8 flags[2];
 	__u8 op;
 	__be16 drv_id;
 	__be64 lba;
 	__u8 num_sectors;
 	__be32 tag;
 /* FIXME need autopadding for target-side word-size DMA alignment */
-	__u8 pad[3];
+	__u8 pad[2];
 } __attribute__((packed));
 
 struct ethblk_cfg_hdr {
