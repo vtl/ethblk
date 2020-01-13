@@ -2281,14 +2281,9 @@ void ethblk_initiator_cmd_response(struct sk_buff *skb)
 	}
 
 	cmd = t->d->cmd[cmd_nr];
-	if (!spin_trylock_bh(&cmd->lock)) {
-		DEBUG_INI_CMD(debug, cmd,
-			      "target %s request is locked"
-			      "(was just requeued?)",
-			      t->name);
-		NET_STAT_INC(cmd->t, cnt.rx_late_count);
-		goto out;
-	}
+
+	spin_lock_bh(&cmd->lock);
+
 	if (!blk_mq_request_started(blk_mq_rq_from_pdu(cmd))) {
 		DEBUG_INI_CMD(debug, cmd,
 			      "target %s request is not started"
