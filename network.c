@@ -128,16 +128,16 @@ int ethblk_network_xmit_skb(struct sk_buff *skb)
 	if (ret != NET_XMIT_SUCCESS && net_ratelimit()) {
 		switch (ret) {
 		case NET_XMIT_DROP:
-			pr_warn("ethblk: packet dropeed on %s.  %s\n",
-				ifp ? ifp->name : "netif",
-				"consider increasing tx_queue_len");
+			pr_warn("ethblk: packet dropped on %s, "
+				"consider increasing txqueuelen\n",
+				name);
 			break;
 		case NET_XMIT_CN:
 			pr_warn("ethblk: congestion detected on %s\n", name);
 			break;
 		default:
-			pr_warn("ethblk: dev_queue_xmit failed on %s: %d\n", name,
-				ret);
+			pr_warn("ethblk: dev_queue_xmit failed on %s: %d\n",
+				name, ret);
 			break;
 		}
 	}

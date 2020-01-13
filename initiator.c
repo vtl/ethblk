@@ -152,9 +152,8 @@ ethblk_initiator_cmd_dump_to_string(struct ethblk_initiator_cmd *cmd, char *ptr,
 		       cmd->retries, cmd->d->name, req_op(req), req_name);
 	if (has_lba) {
 		snprintf(ptr + ret, n - ret, " lba %llu len %u",
-			 cmd->ethblk_hdr.lba, cmd->ethblk_hdr.num_sectors);
-			 /* (unsigned long long)blk_rq_pos(req), */
-			 /* blk_rq_bytes(req)); */
+			 be64_to_cpu(cmd->ethblk_hdr.lba),
+			 cmd->ethblk_hdr.num_sectors);
 	}
 }
 
@@ -1430,12 +1429,12 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 
 		status = BLK_EH_RESET_TIMER;
 		goto out_unlock;
-	} else {
-		dprintk(err,
-			"cmd[%d] hctx %d req %px timed out %d times, abort\n",
-			cmd->id, cmd->hctx_idx, req, cmd->retries);
-		cmd->status = BLK_STS_TIMEOUT;
 	}
+
+	dprintk(err,
+		"cmd[%d] hctx %d req %px timed out %d times, abort\n",
+		cmd->id, cmd->hctx_idx, req, cmd->retries);
+	cmd->status = BLK_STS_TIMEOUT;
 	ethblk_initiator_blk_complete_request_locked(req);
 out_unlock:
 	spin_unlock(&cmd->lock);
