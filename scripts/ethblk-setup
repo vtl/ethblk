@@ -21,6 +21,7 @@ set_irq_affinity.sh ${nic} # from mlnx-en-utils
 max_rings=$(ethtool -g ${nic} | grep [RT]X: | head -2 | cut -c 1-3,6- | tr ':' ' ' | tr '[:upper:]' '[:lower:]')
 ethtool -G ${nic} $max_rings
 ethtool --set-priv-flags ${nic} rx_cqe_compress on
+ethtool -A ${nic} rx off tx off
 
 sysctl -w net.core.netdev_budget=5000
 sysctl -w net.core.netdev_budget_usecs=10000
