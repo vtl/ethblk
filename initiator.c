@@ -1172,8 +1172,6 @@ ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd, bool last)
 		goto out;
 	}
 
-	WARN(cmd->t, "cmd has assigned target");
-
 	t = ethblk_initiator_disk_cmd_get_next_tgt(cmd);
 
 	if (!t) {

@@ -79,15 +79,24 @@ bool ethblk_network_skb_is_l2(struct sk_buff *skb)
 
 bool ethblk_network_skb_is_l3(struct sk_buff *skb)
 {
-	if (!pskb_may_pull(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) +
-					sizeof(struct udphdr) +
-					sizeof(struct ethblk_hdr) - ETH_HLEN))
+	struct udphdr *udp_hdr;
+
+	if (!pskb_may_pull(skb,
+			   + sizeof(struct ethhdr)
+			   + sizeof(struct iphdr)
+			   + sizeof(struct udphdr)
+			   + sizeof(struct ethblk_hdr)
+			   - ETH_HLEN)) {
 		return false;
+	}
+
+	/* udp_hdr(skb) does not work correctly with cxgb4??? */
+	udp_hdr = (struct udphdr *)(ip_hdr(skb) + 1);
 
 	return ((skb->protocol == htons(ETH_P_IP) &&
 		 (ip_hdr(skb)->protocol == IPPROTO_UDP) &&
-		 (ntohs(udp_hdr(skb)->dest) >= eth_p_type) &&
-		 (ntohs(udp_hdr(skb)->dest)  < eth_p_type + ip_ports)));
+		 (ntohs(udp_hdr->dest) >= eth_p_type) &&
+		 (ntohs(udp_hdr->dest)  < eth_p_type + ip_ports)));
 }
 
 bool ethblk_network_skb_is_mine(struct sk_buff *skb)
