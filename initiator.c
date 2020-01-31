@@ -653,6 +653,7 @@ static ssize_t ethblk_initiator_disk_tgt_stat_store(struct kobject *kobj,
 		t->net_stat_enabled = param[0];
 		break;
 	case 4: /* set new histogram */
+		ethblk_initiator_disk_tgt_stat_clear(t);
 		ret = ethblk_initiator_disk_tgt_stat_hist_init(
 			t, param[0], param[1], param[2], param[3]);
 		if (ret)
