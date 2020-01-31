@@ -34,6 +34,9 @@ struct ethblk_initiator_net_stat {
 		unsigned long long tx_retry_count;
 		unsigned long long rx_err_count;
 		unsigned long long rx_late_count;
+		unsigned long long rxtx_same_cpu;
+		unsigned long long rxtx_other_cpu;
+
 	} _cnt;
 	struct latency {
 		u64 read;
@@ -134,11 +137,13 @@ struct ethblk_initiator_cmd {
 	unsigned long time_completed;
 	unsigned long gen_id; /* tag generation id */
 	bool l3;
+	unsigned cpu_submitted;
+	unsigned cpu_completed;
 	struct ethblk_hdr ethblk_hdr;
 } __attribute__((aligned(64)));
 
 void ethblk_initiator_discover_response(struct sk_buff *);
-void ethblk_initiator_cmd_response(struct sk_buff *);
+void ethblk_initiator_cmd_response(struct sk_buff *, unsigned);
 void ethblk_initiator_cmd_deferred(struct sk_buff *, int);
 void ethblk_initiator_handle_cfg_change(struct sk_buff *);
 

@@ -39,6 +39,7 @@ struct ethblk_worker_cb {
 	void (*fn)(struct ethblk_worker_cb *);
 	void *data;
 	enum ethblk_worker_cb_type type;
+	unsigned comp_cpu;
 };
 
 struct ethblk_worker {

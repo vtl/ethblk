@@ -401,6 +401,11 @@ static void ethblk_initiator_cmd_stat_account(struct ethblk_initiator_cmd *cmd)
 		NET_STAT_INC(cmd->t, cnt.err_count);
 	}
 
+	if (cmd->cpu_submitted == cmd->cpu_completed)
+		NET_STAT_INC(cmd->t, cnt.rxtx_same_cpu);
+	else
+		NET_STAT_INC(cmd->t, cnt.rxtx_other_cpu);
+
 	if (!cmd->t->lat_stat_enabled)
 		return;
 
@@ -440,7 +445,8 @@ ethblk_initiator_net_stat_dump(char *buf, int len,
 	ret = snprintf(buf, len,
 		       "rx-count %llu\ntx-count %llu\nrx-bytes %llu\n"
 		       "tx-bytes %llu\ntx-dropped %llu\nerr-count %llu\n"
-		       "tx-retry-count %llu\nrx-late-count %llu\n",
+		       "tx-retry-count %llu\nrx-late-count %llu\n"
+		       "rx-tx-same-cpu %llu\nrx-tx-other-cpu %llu\n",
 		       NET_STAT_GET(stat, cnt.rx_count),
 		       NET_STAT_GET(stat, cnt.tx_count),
 		       NET_STAT_GET(stat, cnt.rx_bytes),
@@ -448,7 +454,9 @@ ethblk_initiator_net_stat_dump(char *buf, int len,
 		       NET_STAT_GET(stat, cnt.tx_dropped),
 		       NET_STAT_GET(stat, cnt.err_count),
 		       NET_STAT_GET(stat, cnt.tx_retry_count),
-		       NET_STAT_GET(stat, cnt.rx_late_count));
+		       NET_STAT_GET(stat, cnt.rx_late_count),
+		       NET_STAT_GET(stat, cnt.rxtx_same_cpu),
+		       NET_STAT_GET(stat, cnt.rxtx_other_cpu));
 
 	ret += snprintf(buf + ret, len - ret, "rlat-total %llu\n",
 			NET_STAT_GET(stat, lat.read));
@@ -1273,6 +1281,7 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 			blk_rq_bytes(bd->rq), cmd->retries);
 	cmd->retries = 0;
 	cmd->time_queued = cmd->time_requeued = current_time = ktime_get_ns();
+	cmd->cpu_submitted = smp_processor_id();
 
 	blk_mq_start_request(bd->rq);
 
@@ -2229,7 +2238,7 @@ out:
 	return;
 }
 
-void ethblk_initiator_cmd_response(struct sk_buff *skb)
+void ethblk_initiator_cmd_response(struct sk_buff *skb, unsigned comp_cpu)
 {
 	struct ethblk_hdr *rep_hdr = ethblk_network_skb_get_hdr(skb);
 	struct ethblk_initiator_disk *d;
@@ -2302,7 +2311,7 @@ void ethblk_initiator_cmd_response(struct sk_buff *skb)
 
 	DEBUG_INI_CMD(debug, cmd, "found cmd %px L%d for tag %d", cmd,
 		      cmd->l3 ? 3 : 2, tag);
-
+	cmd->cpu_completed = comp_cpu;
 	ethblk_initiator_cmd_complete(cmd, skb);
 	ethblk_initiator_blk_complete_request_locked(blk_mq_rq_from_pdu(cmd));
 out_unlock:
@@ -2319,7 +2328,7 @@ static void ethblk_initiator_cmd(struct ethblk_worker_cb *cb)
 
 	switch (cb->type) {
 	case ETHBLK_WORKER_CB_TYPE_INITIATOR_IO:
-		ethblk_initiator_cmd_response(skb);
+		ethblk_initiator_cmd_response(skb, cb->comp_cpu);
 		break;
 	case ETHBLK_WORKER_CB_TYPE_INITIATOR_DISCOVER:
 		ethblk_initiator_discover_response(skb);
@@ -2688,6 +2697,7 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
 	cb->fn = ethblk_initiator_cmd;
 	cb->data = skb;
 	cb->type = type;
+	cb->comp_cpu = smp_processor_id();
 	if (!ethblk_worker_enqueue(workers, &cb->list)) {
 		dprintk_ratelimit(err, "can't enqueue work\n");
 		goto err;
