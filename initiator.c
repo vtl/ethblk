@@ -237,7 +237,7 @@ ethblk_initiator_net_stat_clear(struct ethblk_initiator_net_stat __percpu *stat)
 
 static void ethblk_initiator_disk_tgt_stat_clear(struct ethblk_initiator_tgt *t)
 {
-	dprintk(info, "t %s %p\n", t->name, t);
+	dprintk(info, "tgt %s %px\n", t->name, t);
 
 	ethblk_initiator_net_stat_clear(t->stat);
 }
@@ -249,7 +249,8 @@ static int ethblk_initiator_disk_tgt_stat_hist_init(
 {
 	int cpu;
 
-	dprintk(info, "%s %u %u %u %u\n", t->name, lat_hist_buckets,
+	dprintk(info, "tgt %s buckets:%u start:%u size:%u grow:%u/100\n",
+		t->name, lat_hist_buckets,
 		lat_hist_start, lat_hist_bucket_size,
 		lat_hist_bucket_grow_factor);
 
@@ -511,8 +512,8 @@ static ssize_t ethblk_initiator_disk_stat_store(struct kobject *kobj,
 		ethblk_initiator_disk_stat_clear(d);
 		break;
 	case 2:
-		d->lat_stat_enabled = param[1];
 		d->net_stat_enabled = param[0];
+		d->lat_stat_enabled = param[1];
 		break;
 	case 1:
 		d->net_stat_enabled = param[0];
@@ -1271,7 +1272,7 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 			(unsigned long long)blk_rq_pos(bd->rq),
 			blk_rq_bytes(bd->rq), cmd->retries);
 	cmd->retries = 0;
-	cmd->time_queued = cmd->time_requeued = current_time = jiffies;
+	cmd->time_queued = cmd->time_requeued = current_time = ktime_get_ns();
 
 	blk_mq_start_request(bd->rq);
 
@@ -1343,7 +1344,7 @@ static void ethblk_initiator_blk_complete_request_locked(struct request *req)
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
 
-	cmd->time_completed = jiffies;
+	cmd->time_completed = ktime_get_ns();
 	ethblk_initiator_cmd_stat_account(cmd);
 	cmd->time_queued = 0; /* prepare for the next round */
 
@@ -1381,7 +1382,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 #else
 	enum blk_eh_timer_return status = BLK_EH_DONE;
 #endif
-	unsigned long current_time = jiffies;
+	unsigned long current_time = ktime_get_ns();
 
 	if (!spin_trylock(&cmd->lock)) {
 		return BLK_EH_RESET_TIMER;
@@ -1405,7 +1406,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 		goto out_unlock;
 	}
 
-	if ((current_time - cmd->time_queued) < (HZ * CMD_TIMEOUT_S)) {
+	if (nsecs_to_jiffies(current_time - cmd->time_queued) < (HZ * CMD_TIMEOUT_S)) {
 		struct ethblk_initiator_disk_tgt_context *tctx;
 
 		DEBUG_INI_CMD(debug, cmd, "rexmit");
