@@ -317,7 +317,6 @@ bool ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
 	bool ret = true;
 	bool active, empty;
 	struct ethblk_worker_pool_rps_stat *s;
-	unsigned long flags;
 
 	cpu_out = p->rps.cpu_out[cpu_in];
 	w = &p->worker[cpu_out];
@@ -331,13 +330,13 @@ bool ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
 	s->in[cpu_in]++;
 	s->out[cpu_out]++;
 	dprintk(debug, "enqueue to worker[%d]\n", w->idx);
-	spin_lock_irqsave(&w->lock, flags);
+	spin_lock_bh(&w->lock);
 	empty = list_empty(&w->queue);
 	list_add_tail(list, &w->queue);
 	active = w->active;
 	if (!w->active)
 		w->active = true;
-	spin_unlock_irqrestore(&w->lock, flags);
+	spin_unlock_bh(&w->lock);
 
 	if (!active)
 		ret = kthread_queue_work(w->worker, &w->work);
