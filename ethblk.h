@@ -113,12 +113,6 @@ struct ethblk_cfg_hdr {
 	__u8 uuid[UUID_SIZE];
 } __attribute__((packed));
 
-static inline void ethblk_dump_mac(char *s, int len, unsigned char *mac)
-{
-	snprintf(s, len, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
-		 mac[2], mac[3], mac[4], mac[5]);
-}
-
 void ethblk_net_init(void);
 void ethblk_net_exit(void);
 

@@ -695,7 +695,7 @@ static ssize_t ethblk_initiator_disk_tgts_add_store(struct kobject *kobj,
 	struct ethblk_initiator_tgt *t;
 	struct net_device *nd;
 	unsigned char mac[ETH_ALEN];
-	int ip[4];
+	unsigned char ip[4];
 	char iface[IFNAMSIZ];
 	char s[ETH_ALEN * 3 + 1];
 	int ret;
@@ -708,7 +708,7 @@ static ssize_t ethblk_initiator_disk_tgts_add_store(struct kobject *kobj,
 	if (ret == 7) /* L2 target */
 		goto create;
 
-	ret = sscanf(buf, "%u.%u.%u.%u %s", &ip[0], &ip[1], &ip[2], &ip[3],
+	ret = sscanf(buf, "%hhu.%hhu.%hhu.%hhu %s", &ip[0], &ip[1], &ip[2], &ip[3],
 		     iface);
 
 	if (ret != 5) {
@@ -1766,14 +1766,13 @@ ethblk_initiator_disk_find_target(struct ethblk_initiator_disk *d,
 	if (l3) {
 		dprintk(debug,
 			"disk %s searching target "
-			"%s_%03d.%03d.%03d.%03d\n",
-			d->name, nd->name, p[0], p[1], p[2], p[3]);
+			"%s_%pI4\n",
+			d->name, nd->name, p);
 	} else {
 		dprintk(debug,
 			"disk %s searching target "
-			"%s_%02x:%02x:%02x:%02x:%02x:%02x\n",
-			d->name, nd->name, p[0], p[1], p[2], p[3],
-			p[4], p[5]);
+			"%s_%pM\n",
+			d->name, nd->name, p);
 	}
 	rcu_read_lock();
 	ta = rcu_dereference(d->targets);
@@ -1858,8 +1857,8 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 
 	if (tn->l3) {
 		tn->dest_ip = (__be32 __force) * (unsigned int *)addr;
-		snprintf(tn->name, sizeof(tn->name), "%s_%03d.%03d.%03d.%03d",
-			 nd->name, addr[0], addr[1], addr[2], addr[3]);
+		snprintf(tn->name, sizeof(tn->name), "%s_%pI4",
+			 nd->name, addr);
 		if (ethblk_network_route_l3(tn->nd, tn->dest_ip,
 					    tn->local_ip,
 					    tn->router_mac) == 0)
@@ -1869,11 +1868,10 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 	} else {
 		ether_addr_copy(tn->mac, addr);
 		snprintf(tn->name, sizeof(tn->name),
-			 "%s_%02x:%02x:%02x:%02x:%02x:%02x", nd->name, addr[0],
-			 addr[1], addr[2], addr[3], addr[4], addr[5]);
+			 "%s_%pM", nd->name, addr);
 	}
 
-	dprintk(info, "disk %s creating target %s %p\n", d->name, tn->name, tn);
+	dprintk(info, "disk %s creating target %s %px\n", d->name, tn->name, tn);
 
 	INIT_LIST_HEAD(&tn->list);
 	INIT_WORK(&tn->free_work, ethblk_initiator_tgt_free_deferred);
@@ -2064,13 +2062,13 @@ void ethblk_initiator_discover_response(struct sk_buff *skb)
 	if (l3)
 		dprintk(info,
 			"DISCOVER response for eda%d "
-			"%s_%03d.%03d.%03d.%03d\n",
-			drv_id, skb->dev->name, p[0], p[1], p[2], p[3]);
+			"%s_%pI4\n",
+			drv_id, skb->dev->name, p);
 	else
 		dprintk(info,
 			"DISCOVER response for eda%d "
-			"%s_%02x:%02x:%02x:%02x:%02x:%02x\n",
-			drv_id, skb->dev->name, p[0], p[1], p[2], p[3], p[4], p[5]);
+			"%s_%pM\n",
+			drv_id, skb->dev->name, p);
 
 	d = ethblk_initiator_find_disk(drv_id, true);
 	if (d == NULL) {
@@ -2263,10 +2261,7 @@ void ethblk_initiator_cmd_response(struct sk_buff *skb, unsigned comp_cpu)
 	t = ethblk_initiator_disk_find_target_by_skb(skb);
 
 	if (!t) {
-		char s[ETH_ALEN * 3 + 1];
-
-		ethblk_dump_mac(s, sizeof(s), rep_hdr->src);
-		dprintk(debug, "unknown target %s for disk %s\n", s, d->name);
+		dprintk(debug, "unknown target %pM for disk %s\n", rep_hdr->src, d->name);
 		NET_STAT_INC(t, cnt.rx_err_count);
 		goto out;
 	}
@@ -2636,8 +2631,8 @@ static void ethblk_initiator_netdevice_up(struct net_device *nd)
 	unsigned char *p = (unsigned char *)&ip;
 
 	/* Reread IPv4 address */
-	dprintk(info, "nd %px name %s addr %03d.%03d.%03d.%03d\n",
-		nd, nd->name, p[0], p[1], p[2], p[3]);
+	dprintk(info, "nd %px name %s addr %pI4\n",
+		nd, nd->name, p);
 
 	mutex_lock(&ethblk_initiator_disks_lock);
 	list_for_each_entry_safe (d, n, &ethblk_initiator_disks, list) {

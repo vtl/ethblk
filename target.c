@@ -409,10 +409,8 @@ ethblk_target_disk_find_and_delete_initiator(struct ethblk_target_disk *d,
 	ini = ethblk_target_disk_initiator_find(d, mac, nd);
 
 	if (!ini) {
-		char s[ETH_ALEN * 3];
-		ethblk_dump_mac(s, sizeof(s), mac);
-		dprintk(info, "disk %s initiator %s_%s was not found\n",
-			d->name, nd->name, s);
+		dprintk(info, "disk %s initiator %s_%pM was not found\n",
+			d->name, nd->name, mac);
 		ret = -ENOENT;
 		goto err_nd;
 	}
@@ -522,7 +520,6 @@ static ssize_t ethblk_target_disk_ini_add_store(struct kobject *kobj,
 		container_of(kobj, struct ethblk_target_disk, inis_kobj);
 	unsigned char mac[ETH_ALEN];
 	char iface[IFNAMSIZ];
-	char s[ETH_ALEN * 3 + 1];
 	int ret;
 
 	ret = sscanf(buf, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx %s",
@@ -535,9 +532,8 @@ static ssize_t ethblk_target_disk_ini_add_store(struct kobject *kobj,
 
 	ret = ethblk_target_disk_add_initiator(d, mac, iface);
 	if (ret) {
-		ethblk_dump_mac(s, sizeof(s), mac);
-		dprintk(debug, "disk %s can't add initiator %s/%s\n", d->name,
-			s, iface);
+		dprintk(debug, "disk %s can't add initiator %pM/%s\n", d->name,
+			mac, iface);
 		count = ret;
 	}
 	return count;
@@ -552,7 +548,6 @@ static ssize_t ethblk_target_disk_ini_delete_store(struct kobject *kobj,
 		container_of(kobj, struct ethblk_target_disk, inis_kobj);
 	unsigned char mac[ETH_ALEN];
 	char iface[IFNAMSIZ];
-	char s[ETH_ALEN * 3 + 1];
 	int ret;
 
 	ret = sscanf(buf, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx %s",
@@ -565,9 +560,8 @@ static ssize_t ethblk_target_disk_ini_delete_store(struct kobject *kobj,
 
 	ret = ethblk_target_disk_find_and_delete_initiator(d, mac, iface);
 	if (ret) {
-		ethblk_dump_mac(s, sizeof(s), mac);
-		dprintk(debug, "disk %s can't del initiator %s_%s\n", d->name,
-			iface, s);
+		dprintk(debug, "disk %s can't del initiator %s_%pM\n", d->name,
+			iface, mac);
 		count = ret;
 	}
 	return count;
@@ -904,11 +898,9 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 		ethblk_target_disk_initiator_find(cmd->d, req_hdr->src, req_skb->dev);
 
 	if (!cmd->ini) {
-		char s[ETH_ALEN * 3 + 1];
-		ethblk_dump_mac(s, sizeof(s), req_hdr->src);
 		dprintk_ratelimit(err,
-				  "initiator %s_%s has no access to disk %s\n",
-				  req_skb->dev->name, s, cmd->d->name);
+				  "initiator %s_%pM has no access to disk %s\n",
+				  req_skb->dev->name, req_hdr->src, cmd->d->name);
 		/* can't use NET_STAT_INC, it needs initiator */
 		stat->_cnt.rx_dropped++;
 		goto out;
@@ -996,11 +988,9 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
 
 	if (!cmd->ini) {
-		char s[ETH_ALEN * 3 + 1];
-		ethblk_dump_mac(s, sizeof(s), req_hdr->src);
 		dprintk_ratelimit(err,
-				  "initiator %s/%s has no access to disk %s\n",
-				  s, req_skb->dev->name, d->name);
+				  "initiator %s_%pM has no access to disk %s\n",
+				  req_skb->dev->name, req_hdr->src, d->name);
 		goto out_drop;
 	}
 
@@ -1364,11 +1354,9 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
 
 	if (!cmd->ini) {
-		char s[ETH_ALEN * 3 + 1];
-		ethblk_dump_mac(s, sizeof(s), req_hdr->src);
 		dprintk_ratelimit(err,
-				  "initiator %s/%s has no access to disk %s\n",
-				  s, req_skb->dev->name, d->name);
+				  "initiator %s_%pM has no access to disk %s\n",
+				  req_skb->dev->name, req_hdr->src, d->name);
 		goto out_drop;
 	}
 
@@ -1572,20 +1560,17 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 	struct sk_buff *rep_skb;
 	struct ethblk_target_disk *d;
 	struct ethblk_target_disk_ini *ini;
-	char s[ETH_ALEN * 3 + 1];
-
-	ethblk_dump_mac(s, sizeof(s), req_hdr->src);
 
 	dprintk(info, "checking initiator %s_%s access to disks\n",
-		skb->dev->name, s);
+		skb->dev->name, req_hdr->src);
 
 	rcu_read_lock();
 	list_for_each_entry(d, &ethblk_target_disks, list) {
 		ini = ethblk_target_disk_initiator_find(d, req_hdr->src, skb->dev);
 		if (!ini)
 			continue;
-		dprintk(debug, "initiator %s_%s revealing disk %s\n",
-			skb->dev->name, s, d->name);
+		dprintk(debug, "initiator %s_%pM revealing disk %s\n",
+			skb->dev->name, req_hdr->src, d->name);
 
 		rep_skb = ethblk_network_new_skb(ETH_ZLEN);
 		if (!rep_skb) {
