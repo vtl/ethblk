@@ -1625,7 +1625,6 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 	dprintk(debug, "drv_id %d create %d\n", drv_id, create);
 	d = xa_load(&ethblk_initiator_disks, drv_id);
 	if (d) {
-
 // FIXME need it		ethblk_initiator_get_disk(d);
 		dprintk(debug, "found disk %px %s\n", d, d->name);
 		goto out;
@@ -1640,7 +1639,6 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 		dprintk(err, "can't alloc new disk");
 		goto out_err;
 	}
-	INIT_LIST_HEAD(&d->list);
 	kref_init(&d->ref);
 	d->drv_id = drv_id;
 	snprintf(d->name, sizeof(d->name), "eda%d", d->drv_id);

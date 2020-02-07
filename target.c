@@ -9,6 +9,7 @@
 #include <linux/blk-mq.h>
 #include <linux/module.h>
 #include <linux/version.h>
+#include <linux/xarray.h>
 #include "ethblk.h"
 #include "network.h"
 #include "target.h"
@@ -52,8 +53,7 @@ static struct ethblk_worker_pool *workers;
 
 static struct kmem_cache *ethblk_target_cmd_cache = NULL;
 
-static DEFINE_MUTEX(ethblk_target_disks_lock);
-static struct list_head ethblk_target_disks;
+DEFINE_XARRAY(ethblk_target_disks);
 
 static void ethblk_target_initiator_free_deferred(struct work_struct *w);
 static void
@@ -106,13 +106,14 @@ static int ethblk_target_disk_net_stat_init(
 
 static void ethblk_target_unregister_netdevice(struct net_device *nd)
 {
-	struct ethblk_target_disk *d, *n;
+	struct ethblk_target_disk *d;
 	struct ethblk_target_disk_ini *ini;
+	unsigned long drv_id;
 
 	/* FIXME rtnl_lock held, we are in atomic context. Oh well... */
 	dprintk(info, "nd %px name %s\n", nd, nd->name);
 	rcu_read_lock();
-	list_for_each_entry_safe (d, n, &ethblk_target_disks, list) {
+	xa_for_each(&ethblk_target_disks, drv_id, d) {
 		list_for_each_entry_rcu (ini, &d->initiators, list) {
 			if (nd == ini->nd) {
 				ethblk_target_disk_delete_initiator(ini);
@@ -130,6 +131,7 @@ ethblk_target_disk_initiator_find(struct ethblk_target_disk *d,
 
 	rcu_read_lock();
 	list_for_each_entry_rcu (ini, &d->initiators, list) {
+// FIXME xarray too?
 		if ((nd == ini->nd) && ether_addr_equal(mac, ini->mac)) {
 			ethblk_target_get_ini(ini);
 			goto out;
@@ -595,11 +597,11 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	/* FIXME do mutex_lock only for list_add_rcu
     rest is under rcu_lock
     or add empty disk struct to the list and set the flag that it is initing */
-	mutex_lock(&ethblk_target_disks_lock);
-	d = ethblk_target_find_disk(drv_id);
+
+	d = xa_load(&ethblk_target_disks, drv_id);
 	if (d) {
 		dprintk(err, "disk %s already exists: %px\n", d->name, d);
-		ethblk_target_put_disk(d);
+// FIXME review and remove		ethblk_target_put_disk(d);
 		ret = -EEXIST;
 		goto out;
 	}
@@ -613,7 +615,6 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	d->net_stat_enabled = net_stat;
 	uuid_gen(&d->uuid);
 
-	INIT_LIST_HEAD(&d->list);
 	INIT_LIST_HEAD(&d->initiators);
 	INIT_WORK(&d->destroy_work, ethblk_target_destroy_disk_deferred);
 	INIT_WORK(&d->free_work, ethblk_target_disk_free_deferred);
@@ -685,7 +686,7 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 
 	d->backend_path = kstrdup(path, GFP_KERNEL);
 
-	list_add_tail_rcu(&d->list, &ethblk_target_disks);
+	xa_store(&ethblk_target_disks, d->drv_id, d, GFP_KERNEL);
 	dprintk(info, "disk %s created\n", d->name);
 	ret = 0;
 	goto out;
@@ -705,8 +706,6 @@ out_err:
 	kfree(d);
 	d = NULL;
 out:
-	mutex_unlock(&ethblk_target_disks_lock);
-	synchronize_rcu();
 	return ret;
 };
 
@@ -718,15 +717,11 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 
 	dprintk(info, "freeing disk %s %px\n", d->name, d);
 
-	mutex_lock(&ethblk_target_disks_lock);
 	sysfs_remove_group(&d->inis_kobj, &ethblk_target_disk_inis_group);
 	kobject_del(&d->inis_kobj);
 	sysfs_remove_group(&d->kobj, &ethblk_target_disk_group);
 	kobject_del(&d->kobj);
-	list_del_rcu(&d->list);
-	mutex_unlock(&ethblk_target_disks_lock);
-
-	synchronize_rcu();
+	xa_erase(&ethblk_target_disks, d->drv_id);
 
 	blk_queue_dma_alignment(d->bd->bd_queue, d->old_dma_alignment);
 	blkdev_put(d->bd, FMODE_READ | FMODE_WRITE);
@@ -749,19 +744,13 @@ static void ethblk_target_disk_free(struct percpu_ref *ref)
 
 static void ethblk_target_destroy_all_disks(void)
 {
-	struct ethblk_target_disk *d, *n;
-	LIST_HEAD(tmp);
+	struct ethblk_target_disk *d;
+	unsigned long drv_id;
 
-	mutex_lock(&ethblk_target_disks_lock);
-	list_splice(&ethblk_target_disks, &tmp);
-	mutex_unlock(&ethblk_target_disks_lock);
-
-	list_for_each_entry_safe (d, n, &tmp, list) {
+	xa_for_each(&ethblk_target_disks, drv_id, d) {
 		dprintk(info, "destroying %s %px\n", d->name, d);
 		percpu_ref_kill(&d->ref);
-
 		ethblk_target_disk_inis_free(d);
-
 		wait_for_completion(&d->destroy_completion);
 	}
 }
@@ -1551,12 +1540,12 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 	struct sk_buff *rep_skb;
 	struct ethblk_target_disk *d;
 	struct ethblk_target_disk_ini *ini;
+	unsigned long drv_id;
 
-	dprintk(info, "checking initiator %s_%s access to disks\n",
+	dprintk(info, "checking initiator %s_%pM access to disks\n",
 		skb->dev->name, req_hdr->src);
 
-	rcu_read_lock();
-	list_for_each_entry(d, &ethblk_target_disks, list) {
+	xa_for_each(&ethblk_target_disks, drv_id, d) {
 		ini = ethblk_target_disk_initiator_find(d, req_hdr->src, skb->dev);
 		if (!ini)
 			continue;
@@ -1594,7 +1583,6 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 		ethblk_network_xmit_skb(rep_skb);
 		ethblk_target_put_ini(ini);
 	}
-	rcu_read_unlock();
 }
 
 
@@ -1603,19 +1591,13 @@ static struct ethblk_target_disk *ethblk_target_find_disk(unsigned short drv_id)
 	struct ethblk_target_disk *d;
 
 	dprintk(debug, "drv_id %d\n", drv_id);
-	rcu_read_lock();
-	list_for_each_entry_rcu (d, &ethblk_target_disks, list) {
-		if (d->drv_id == drv_id) {
-			goto out;
-		}
-	}
-	d = NULL;
-out:
+	xa_lock(&ethblk_target_disks);
+	d = xa_load(&ethblk_target_disks, drv_id);
 	if (d) {
 		dprintk(debug, "found disk %px %s\n", d, d->name);
 		ethblk_target_get_disk(d);
 	}
-	rcu_read_unlock();
+	xa_unlock(&ethblk_target_disks);
 	return d;
 }
 
@@ -1659,8 +1641,6 @@ int __init ethblk_target_start(struct kobject *parent)
 		dprintk(err, "can't starts workers: %d\n", ret);
 		goto out;
 	}
-
-	INIT_LIST_HEAD(&ethblk_target_disks);
 
 	ret = register_netdevice_notifier(&ethblk_target_netdevice_notifier);
 	if (ret) {

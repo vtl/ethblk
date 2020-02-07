@@ -42,7 +42,6 @@ struct ethblk_target_disk_ini {
 };
 
 struct ethblk_target_disk {
-	struct list_head list;
 	struct rcu_head rcu;
 	unsigned short drv_id;
 	struct list_head initiators;

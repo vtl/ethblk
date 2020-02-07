@@ -95,7 +95,6 @@ struct ethblk_initiator_tgt_array {
 };
 
 struct ethblk_initiator_disk {
-	struct list_head list;
 	struct rcu_head rcu;
 	unsigned short drv_id;
 	bool online;
