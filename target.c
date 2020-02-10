@@ -1592,13 +1592,13 @@ static struct ethblk_target_disk *ethblk_target_find_disk(unsigned short drv_id)
 	struct ethblk_target_disk *d;
 
 	dprintk(debug, "drv_id %d\n", drv_id);
-	xa_lock(&ethblk_target_disks);
+	rcu_read_lock();
 	d = xa_load(&ethblk_target_disks, drv_id);
 	if (d) {
 		dprintk(debug, "found disk %px %s\n", d, d->name);
 		ethblk_target_get_disk(d);
 	}
-	xa_unlock(&ethblk_target_disks);
+	rcu_read_unlock();
 	return d;
 }
 
