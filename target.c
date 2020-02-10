@@ -460,6 +460,7 @@ static void ethblk_target_destroy_disk_deferred(struct work_struct *w)
 
 	dprintk(info, "disk %s\n", d->name);
 	percpu_ref_kill(&d->ref);
+	ethblk_target_disk_inis_free(d);
 
 	/* NOTE can't wait for completion - disk_free will be scheduled as */
 	/* work, and it may get added to the same work queue we currently */
