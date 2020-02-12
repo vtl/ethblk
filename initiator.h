@@ -73,7 +73,7 @@ struct ethblk_initiator_tgt {
 	bool net_stat_enabled;
 	bool lat_stat_enabled;
 	struct ethblk_initiator_net_stat __percpu *stat;
-	char name[ETH_ALEN * 3 + IFNAMSIZ];
+	char name[ETH_ALEN * 3 + IFNAMSIZ + 1];
 };
 
 #define CMD_TIMEOUT_S 5
