@@ -1514,16 +1514,17 @@ static void ethblk_target_cmd_worker(struct kthread_work *work)
 	struct ethblk_target_cmd *cmd, *n;
 	bool queue_empty;
 	struct blk_plug plug;
+	unsigned long flags;
 
 	dprintk(debug, "worker[%d] on\n", w->idx);
 	for (;;) {
 		INIT_LIST_HEAD(&queue);
-		spin_lock_bh(&w->lock);
+		spin_lock_irqsave(&w->lock, flags);
 		list_splice_tail_init(&w->queue, &queue);
 		queue_empty = list_empty(&queue);
 		if (queue_empty)
 			w->active = false;
-		spin_unlock_bh(&w->lock);
+		spin_unlock_irqrestore(&w->lock, flags);
 
 		if (queue_empty)
 			break;
