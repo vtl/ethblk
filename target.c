@@ -15,7 +15,7 @@
 #include "target.h"
 #include "worker.h"
 
-int force_dma_alignment = 511;
+static int force_dma_alignment = 511;
 module_param(force_dma_alignment, int, 0644);
 MODULE_PARM_DESC(force_dma_alignment, "Force DMA alignment of backing store (511 by default)");
 
@@ -53,7 +53,7 @@ static struct ethblk_worker_pool *workers;
 
 static struct kmem_cache *ethblk_target_cmd_cache = NULL;
 
-DEFINE_XARRAY(ethblk_target_disks);
+static DEFINE_XARRAY(ethblk_target_disks);
 
 static void ethblk_target_initiator_free_deferred(struct work_struct *w);
 static void
@@ -1138,7 +1138,8 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 
 		if (bio->bi_status != BLK_STS_OK) {
 			/* FIXME drop payload, don't send it over network */
-			ETHBLK_HDR_SET_STATUS(rep_hdr, bio->bi_status);
+			ETHBLK_HDR_SET_STATUS(rep_hdr,
+					      blk_status_to_errno(bio->bi_status));
 		}
 	}
 
@@ -1271,7 +1272,7 @@ static void ethblk_target_checksum_cmd_iter(struct ethblk_target_checksum_cmd *c
 
 	if (cs_cmd->sectors <= 0) {
 		int i;
-		__u32 *p = (__u32 *)(cs_cmd->rep_hdr + 1);
+		__be32 *p = (__be32 *)(cs_cmd->rep_hdr + 1);
 		char s[SHA_DIGEST_WORDS * 4 * 2 + 1] = { 0 };
 
 		bin2hex(s, (char *)cs_cmd->sha_dg, SHA_DIGEST_WORDS * 4);

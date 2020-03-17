@@ -54,7 +54,7 @@ MODULE_PARM_DESC(queue_depth, "Initiator disk queue_depth (128 by default)");
 #define TAINT_SCORN (1 > (queue_depth / 4) ? 1 : (queue_depth / 4))
 #define TAINT_RELAX 10000
 
-DEFINE_XARRAY(ethblk_initiator_disks);
+static DEFINE_XARRAY(ethblk_initiator_disks);
 
 static struct ethblk_initiator_tgt *
 ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
@@ -1978,7 +1978,7 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 
 	cmd = blk_mq_rq_to_pdu(req);
 	cmd->ethblk_hdr.op = ETHBLK_OP_ID;
-	cmd->ethblk_hdr.lba = t->id;
+	cmd->ethblk_hdr.lba = cpu_to_be64(t->id);
 
 	blk_execute_rq_nowait(d->queue, NULL, req, 0,
 			      ethblk_initiator_cmd_drv_in_done);
@@ -2002,7 +2002,7 @@ static void ethblk_initiator_tgt_checksum(struct ethblk_initiator_tgt *t,
 
 	cmd = blk_mq_rq_to_pdu(req);
 	cmd->ethblk_hdr.op = ETHBLK_OP_CHECKSUM;
-	cmd->ethblk_hdr.lba = lba;
+	cmd->ethblk_hdr.lba = cpu_to_be64(lba);
 	cmd->ethblk_hdr.num_sectors = sectors;
 
 	blk_execute_rq_nowait(d->queue, NULL, req, 0,
@@ -2060,7 +2060,7 @@ ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
 	struct ethblk_initiator_tgt *t;
 	struct ethblk_cfg_hdr *cfg = (struct ethblk_cfg_hdr *)(rep_hdr + 1);
 	sector_t ssize = be64_to_cpu(cfg->num_sectors);
-	int tgt_id = rep_hdr->lba;
+	int tgt_id = be64_to_cpu(rep_hdr->lba);
 
 	if (d->ssize != ssize) {
 		dprintk(info, "disk %s new size %llu sectors\n", d->name,
@@ -2116,7 +2116,7 @@ static void ethblk_initiator_checksum_cmd_complete(struct ethblk_initiator_cmd *
 						   struct ethblk_hdr *rep_hdr)
 {
 	__u32 *rep_sha_dg = (__u32 *)(rep_hdr + 1);
-	__u32 sha_dg[SHA_DIGEST_WORDS];
+	__be32 sha_dg[SHA_DIGEST_WORDS];
 	char s[SHA_DIGEST_WORDS * 4 * 2 + 1] = { 0 };
 	int i;
 
