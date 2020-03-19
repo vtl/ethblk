@@ -882,7 +882,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	}
 	dprintk(debug, "%s disk ID\n", cmd->d->name);
 
-	stat = per_cpu_ptr(cmd->d->stat, smp_processor_id());
+	stat = this_cpu_ptr(cmd->d->stat);
 
 	cmd->ini =
 		ethblk_target_disk_initiator_find(cmd->d, req_hdr->src, req_skb->dev);
@@ -963,6 +963,8 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	struct ethblk_target_disk_net_stat *stat;
 	struct sk_buff *bio_skb;
 	int offset;
+	int i, ret;
+	struct scatterlist *sg;
 
 	req_hdr = cmd->req_hdr;
 	drv_id = be16_to_cpu(req_hdr->drv_id);
@@ -973,7 +975,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 		goto out;
 	}
 
-	stat = per_cpu_ptr(d->stat, smp_processor_id());
+	stat = this_cpu_ptr(d->stat);
 
 	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
 
@@ -1051,34 +1053,32 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 		dprintk(err, "skb %px skb_to_sgvec failed: %d\n", bio_skb, sgn);
 		goto out_err;
 	}
-// FIXME bio_alloc_bioset
+
 	bio = bio_alloc_bioset(GFP_ATOMIC, sgn, &d->bs);
-	if (bio) {
-		int i, ret;
-		struct scatterlist *sg;
-		for_each_sg (sgl, sg, sgn, i) {
-			ret = bio_add_page(bio, sg_page(sg), sg->length,
-					   sg->offset);
-			dprintk(debug,
-				"skb %px bio %px bio_add_page[%d/%d] "
-				"page %px length %d offset %d: %d\n",
-				bio_skb, bio, i, sgn, sg_page(sg), sg->length,
-				sg->offset, ret);
-			if (ret != sg->length) {
-				dprintk(err,
-					"skb %px bio %px can't add "
-					"page[%d/%d] %px length %d "
-					"offset %d: %d\n",
-					bio_skb, bio, i, sgn, sg_page(sg),
-					sg->length, sg->offset, ret);
-				bio_put(bio);
-				bio = NULL;
-				goto out_err;
-			}
-		}
-	} else {
+	if (!bio) {
 		dprintk_ratelimit(err, "disk %s can't alloc bio\n", d->name);
 		goto out_err;
+	}
+
+	for_each_sg(sgl, sg, sgn, i) {
+		ret = bio_add_page(bio, sg_page(sg), sg->length,
+				   sg->offset);
+		dprintk(debug,
+			"skb %px bio %px bio_add_page[%d/%d] "
+			"page %px length %d offset %d: %d\n",
+			bio_skb, bio, i, sgn, sg_page(sg), sg->length,
+			sg->offset, ret);
+		if (ret != sg->length) {
+			dprintk(err,
+				"skb %px bio %px can't add "
+				"page[%d/%d] %px length %d "
+				"offset %d: %d\n",
+				bio_skb, bio, i, sgn, sg_page(sg),
+				sg->length, sg->offset, ret);
+			bio_put(bio);
+			bio = NULL;
+			goto out_err;
+		}
 	}
 
 	/* add payload for READ reply skb */
@@ -1331,7 +1331,7 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 		goto out;
 	}
 
-	stat = per_cpu_ptr(d->stat, smp_processor_id());
+	stat = this_cpu_ptr(d->stat);
 
 	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
 

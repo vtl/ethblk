@@ -149,7 +149,7 @@ static int ethblk_worker_pool_rps_init(struct ethblk_worker_pool *p)
 	}
 
 	for_each_possible_cpu(cpu) {
-		dprintk(info, "cpu %d/n%d steers to %d/n%d\n",
+		dprintk(debug, "cpu %d/n%d steers to %d/n%d\n",
 			cpu, cpu_to_node(cpu),
 			p->rps.cpu_out[cpu], cpu_to_node(p->rps.cpu_out[cpu]));
 	}

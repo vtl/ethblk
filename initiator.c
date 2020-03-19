@@ -1304,11 +1304,12 @@ static int ethblk_initiator_blk_init_request(struct blk_mq_tag_set *set,
 					     unsigned int numa_node)
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
+	int id_size = 1UL << (8 * (sizeof_field(struct ethblk_hdr, tag) / 2));
 
 	cmd->d = set->driver_data;
 	cmd->hctx_idx = hctx_idx;
 	cmd->id = cmd->d->max_cmd++;
-	if (cmd->id >= 0x10000) { // FIXME
+	if (cmd->id >= id_size) {
 		dprintk(err, "cmd[%d] hctx %d would not fit in ETHBLK TAG\n",
 			cmd->id, hctx_idx);
 		return -ENOMEM;
@@ -2066,6 +2067,7 @@ ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
 		dprintk(info, "disk %s new size %llu sectors\n", d->name,
 			(long long)ssize);
 		d->ssize = ssize;
+// FIXME set_capacity_revalidate_and_notify ?
 		set_capacity(d->gd, ssize);
 		schedule_work(&d->cap_work);
 	}
@@ -2326,7 +2328,6 @@ static void ethblk_initiator_prepare_cfg_pkts(unsigned short drv_id,
 		ETHBLK_HDR_SET_FLAGS(req_hdr, ETHBLK_PROTO_VERSION, 0, 0);
 		req_hdr->drv_id = cpu_to_be16(drv_id);
 		req_hdr->op = ETHBLK_OP_DISCOVER;
-		/* FIXME send IP address as well  */
 	cont:
 		dev_put(ifp);
 	}
@@ -2339,7 +2340,11 @@ static void ethblk_initiator_discover(void)
 	struct sk_buff *skb;
 
 	skb_queue_head_init(&queue);
-	/* FIXME make L3 discoverable */
+	/* NOTE
+	 * DISCOVER is L2 broadcast
+	 * Target answers with IP hint (if configured).
+	 * Initiator automatically picks tgt IP up.
+	 */
 	ethblk_initiator_prepare_cfg_pkts(0xffff, &queue);
 	while ((skb = skb_dequeue(&queue))) {
 		ethblk_network_xmit_skb(skb);
@@ -2375,8 +2380,6 @@ void ethblk_initiator_handle_cfg_change(struct sk_buff *in_skb)
 	req_hdr->op = ETHBLK_OP_DISCOVER;
 
 	ethblk_network_xmit_skb(skb);
-
-	/* FIXME send IP address as well  */
 err:
 	dev_put(in_skb->dev);
 	rcu_read_unlock();
@@ -2711,6 +2714,7 @@ static struct notifier_block ethblk_initiator_netdevice_notifier = {
 int __init ethblk_initiator_start(struct kobject *parent)
 {
 	int ret;
+	int tag_size = 1UL << (8 * (sizeof_field(struct ethblk_hdr, tag) / 2));
 
 	ret = ethblk_initiator_start_workers();
 	if (ret) {
@@ -2740,8 +2744,8 @@ int __init ethblk_initiator_start(struct kobject *parent)
 	if (!num_hw_queues)
 		num_hw_queues = num_online_cpus();
 
-	if ((num_hw_queues + 1) * queue_depth >= 0x10000) { // FIXME
-		num_hw_queues = 0x10000 / queue_depth / 2;
+	if ((num_hw_queues + 1) * queue_depth >= tag_size) {
+		num_hw_queues = tag_size / queue_depth / 2;
 	}
 	dprintk(info,
 		"using Ethernet packet type 0x%04x, disk major %d, "
