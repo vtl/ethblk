@@ -11,6 +11,10 @@ ini_nic=enp193s0
 ini_ip=192.168.50.2
 ini_mac=50:6b:4b:cc:f3:e6
 
+#ini_nic=enp1s0f4
+#ini_ip=192.168.50.4
+#ini_mac=00:07:43:3e:db:60
+
 if [[ $ini == 1 ]]; then
     nic=$ini_nic
 else
@@ -22,6 +26,7 @@ max_rings=$(ethtool -g ${nic} | grep [RT]X: | head -2 | cut -c 1-3,6- | tr ':' '
 ethtool -G ${nic} $max_rings
 ethtool --set-priv-flags ${nic} rx_cqe_compress on
 ethtool -A ${nic} rx off tx off
+ifconfig ${nic} txqueuelen 20000
 
 sysctl -w net.core.netdev_budget=5000
 sysctl -w net.core.netdev_budget_usecs=10000
@@ -43,6 +48,7 @@ fi
 
 if [[ $tgt -eq 1 ]]; then
     ifconfig $tgt_nic $tgt_ip mtu 9216
+    modprobe null_blk bs=512 nr_devices=1 hw_queue_depth=256 queue_mode=0 submit_queues=32
     for i in {0..3}; do
         echo $i /dev/nvme${i}n1 > /sys/kernel/ethblk/target/create_disk
         echo $ini_mac $tgt_nic > /sys/kernel/ethblk/target/eda${i}/initiators/add

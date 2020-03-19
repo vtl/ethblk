@@ -12,6 +12,7 @@
 #include <linux/kobject.h>
 #include <linux/module.h>
 #include <linux/version.h>
+#include <linux/xarray.h>
 #include "ethblk.h"
 #include "initiator.h"
 #include "network.h"
@@ -53,8 +54,8 @@ MODULE_PARM_DESC(queue_depth, "Initiator disk queue_depth (128 by default)");
 #define TAINT_SCORN (1 > (queue_depth / 4) ? 1 : (queue_depth / 4))
 #define TAINT_RELAX 10000
 
-static DEFINE_MUTEX(ethblk_initiator_disks_lock);
-static struct list_head ethblk_initiator_disks;
+static DEFINE_XARRAY(ethblk_initiator_disks);
+
 static struct ethblk_initiator_tgt *
 ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 				 unsigned char *addr, struct net_device *nd,
@@ -98,7 +99,6 @@ static struct kobject ethblk_sysfs_initiator_kobj;
 static DEFINE_IDA(ethblk_used_minors);
 
 static long ethblk_initiator_alloc_minor(void)
-	__must_hold(&ethblk_initiator_disks_lock)
 {
 	int ret;
 
@@ -111,7 +111,6 @@ static long ethblk_initiator_alloc_minor(void)
 }
 
 static void ethblk_initiator_free_minor(long minor)
-	__must_hold(&ethblk_initiator_disks_lock)
 {
 	minor /= ETHBLK_PARTITIONS;
 	WARN_ON(minor >= N_DEVS);
@@ -587,7 +586,7 @@ ethblk_initiator_disk_disconnect_store(struct kobject *kobj,
 	struct ethblk_initiator_disk *d =
 		container_of(kobj, struct ethblk_initiator_disk, kobj);
 
-	dprintk(info, "disconnecting disk %s %p\n", d->name, d);
+	dprintk(info, "disconnecting disk %s %px\n", d->name, d);
 	ethblk_initiator_disk_remove_all_targets(d);
 	ethblk_initiator_put_disk_delayed(d);
 	return count;
@@ -817,10 +816,10 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 	struct ethblk_initiator_disk *d =
 		container_of(ref, struct ethblk_initiator_disk, ref);
 
-	dprintk(info, "freeing disk %s %p\n", d->name, d);
+	dprintk(info, "freeing disk %s %px\n", d->name, d);
 
 	ethblk_initiator_disk_remove_all_targets(d);
-	mutex_lock(&ethblk_initiator_disks_lock);
+//	xa_lock(ethblk_initiator_disks);
 	sysfs_remove_group(&d->kobj, &ethblk_initiator_disk_group);
 	kobject_del(&d->kobj);
 	blk_mq_stop_hw_queues(d->queue);
@@ -863,12 +862,12 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 	}
 #endif
 	put_disk(d->gd);
-	list_del_rcu(&d->list);
+	xa_erase(&ethblk_initiator_disks, d->drv_id);
 	sysfs_remove_group(&d->tgts_kobj, &ethblk_initiator_disk_tgts_group);
 	kobject_del(&d->tgts_kobj);
 	kfree(d->cmd);
 	kfree(d->ctx);
-	mutex_unlock(&ethblk_initiator_disks_lock);
+//	xa_unlock(ethblk_initiator_disks);
 
 	ethblk_initiator_disk_stat_free(d);
 	complete(&d->destroy_completion);
@@ -1034,7 +1033,7 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 	skb->truesize -= skb->data_len;
 	skb_shinfo(skb)->nr_frags = skb->data_len = 0;
 	skb_trim(skb, 0);
-	DEBUG_INI_CMD(debug, cmd, "skb = %p", skb);
+	DEBUG_INI_CMD(debug, cmd, "skb = %px", skb);
 
 	ethblk_initiator_cmd_fill_skb_headers(cmd, skb);
 	skb_put(skb, hdr_size);
@@ -1305,11 +1304,12 @@ static int ethblk_initiator_blk_init_request(struct blk_mq_tag_set *set,
 					     unsigned int numa_node)
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
+	int id_size = 1UL << (8 * (sizeof_field(struct ethblk_hdr, tag) / 2));
 
 	cmd->d = set->driver_data;
 	cmd->hctx_idx = hctx_idx;
 	cmd->id = cmd->d->max_cmd++;
-	if (cmd->id >= 0x10000) { // FIXME
+	if (cmd->id >= id_size) {
 		dprintk(err, "cmd[%d] hctx %d would not fit in ETHBLK TAG\n",
 			cmd->id, hctx_idx);
 		return -ENOMEM;
@@ -1387,11 +1387,7 @@ static enum blk_eh_timer_return
 ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
-	enum blk_eh_timer_return status = BLK_EH_NOT_HANDLED;
-#else
 	enum blk_eh_timer_return status = BLK_EH_DONE;
-#endif
 	unsigned long current_time = ktime_get_ns();
 
 	if (!spin_trylock(&cmd->lock)) {
@@ -1404,11 +1400,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 	}
 
 	if (!cmd->d->online) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
-		status = BLK_EH_HANDLED;
-#else
 		status = BLK_EH_DONE;
-#endif
 		cmd->status = BLK_STS_NEXUS;
 		dprintk_ratelimit(
 			err, "cmd[%d] hctx %d req %px disk is offline, abort\n",
@@ -1591,17 +1583,11 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	blk_queue_io_min(q, 512);
 	blk_queue_bounce_limit(q, BLK_BOUNCE_ANY);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
-	queue_flag_clear_unlocked(QUEUE_FLAG_ADD_RANDOM, q);
-	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, q);
-	queue_flag_set_unlocked(QUEUE_FLAG_NOMERGES, q);
-	queue_flag_set_unlocked(QUEUE_FLAG_NOXMERGES, q);
-#else
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, q);
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, q);
 	blk_queue_flag_set(QUEUE_FLAG_NOMERGES, q);
 	blk_queue_flag_set(QUEUE_FLAG_NOXMERGES, q);
-#endif
+
 	q->nr_requests = d->tag_set.queue_depth;
 	d->queue = gd->queue = q;
 
@@ -1638,31 +1624,15 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 	int ret;
 
 	dprintk(debug, "drv_id %d create %d\n", drv_id, create);
-	rcu_read_lock();
-	list_for_each_entry_rcu(d, &ethblk_initiator_disks, list) {
-		if (d->drv_id == drv_id) {
-			rcu_read_unlock();
-			dprintk(debug, "found disk %px %s\n", d, d->name);
-			goto out;
-		}
+	d = xa_load(&ethblk_initiator_disks, drv_id);
+	if (d) {
+// FIXME need it		ethblk_initiator_get_disk(d);
+		dprintk(debug, "found disk %px %s\n", d, d->name);
+		goto out;
 	}
-	rcu_read_unlock();
 
 	if (!create)
-		return NULL;
-
-	mutex_lock(&ethblk_initiator_disks_lock);
-	/* one more search under the lock */
-	rcu_read_lock();
-	list_for_each_entry_rcu(d, &ethblk_initiator_disks, list) {
-		if (d->drv_id == drv_id) {
-			rcu_read_unlock();
-			mutex_unlock(&ethblk_initiator_disks_lock);
-			dprintk(debug, "found disk %px %s\n", d, d->name);
-			goto out;
-		}
-	}
-	rcu_read_unlock();
+		goto out;
 
 	dprintk(debug, "allocating new disk eda%d\n", drv_id);
 	d = kzalloc(sizeof(struct ethblk_initiator_disk), GFP_ATOMIC);
@@ -1670,7 +1640,6 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 		dprintk(err, "can't alloc new disk");
 		goto out_err;
 	}
-	INIT_LIST_HEAD(&d->list);
 	kref_init(&d->ref);
 	d->drv_id = drv_id;
 	snprintf(d->name, sizeof(d->name), "eda%d", d->drv_id);
@@ -1692,7 +1661,8 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 		dprintk(err, "can't create gendisk\n");
 		goto out_err_kobj;
 	}
-	list_add_tail_rcu(&d->list, &ethblk_initiator_disks);
+// FIXME check needed?
+	xa_store(&ethblk_initiator_disks, d->drv_id, d, GFP_ATOMIC);
 
 	ret = sysfs_create_group(&d->kobj, &ethblk_initiator_disk_group);
 	if (ret) {
@@ -1714,11 +1684,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 			ret);
 		goto out_err_kobj_tgts;
 	}
-
-	mutex_unlock(&ethblk_initiator_disks_lock);
-	synchronize_rcu();
 out:
-	dprintk(debug, "disk %s = %p\n", d->name, d);
 	return d;
 
 out_err_kobj_tgts:
@@ -1732,21 +1698,16 @@ out_err_kobj:
 out_err_disk:
 	kfree(d);
 out_err:
-	mutex_unlock(&ethblk_initiator_disks_lock);
 	return NULL;
 }
 
 static void ethblk_initiator_destroy_all_disks(void)
 {
-	struct ethblk_initiator_disk *d, *n;
-	LIST_HEAD(tmp);
+	struct ethblk_initiator_disk *d;
+	unsigned long drv_id;
 
-	mutex_lock(&ethblk_initiator_disks_lock);
-	list_splice(&ethblk_initiator_disks, &tmp);
-	mutex_unlock(&ethblk_initiator_disks_lock);
-
-	list_for_each_entry_safe (d, n, &tmp, list) {
-		dprintk(info, "destroying %s %p\n", d->name, d);
+	xa_for_each(&ethblk_initiator_disks, drv_id, d) {
+		dprintk(info, "destroying %s %px\n", d->name, d);
 		ethblk_initiator_disk_remove_all_targets(d);
 		ethblk_initiator_put_disk_delayed(d);
 		wait_for_completion(&d->destroy_completion);
@@ -1780,7 +1741,7 @@ ethblk_initiator_disk_find_target(struct ethblk_initiator_disk *d,
 		t = ta->tgts[i];
 		if ((nd == t->nd) && (l3 ? (t->dest_ip == ip) :
 					   ether_addr_equal(t->mac, p))) {
-			dprintk(debug, "disk %s found target[%d] %s %p\n",
+			dprintk(debug, "disk %s found target[%d] %s %px\n",
 				d->name, i, t->name, t);
 			ethblk_initiator_get_tgt(t);
 			goto out_unlock;
@@ -1911,7 +1872,7 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 	rcu_read_lock();
 	to = rcu_dereference(d->targets);
 	t->nr = to->nr + 1;
-	dprintk(debug, "disk %s %d old targets at %px, %d new at %p\n", d->name,
+	dprintk(debug, "disk %s %d old targets at %px, %d new at %px\n", d->name,
 		to->nr, to, t->nr, t);
 	for (i = 0; i < to->nr; i++) {
 		dprintk(debug, "disk %s copying target[%d] %s\n", d->name, i,
@@ -1966,7 +1927,7 @@ static int ethblk_initiator_disk_remove_target(struct ethblk_initiator_tgt *t)
 	spin_lock_irqsave(&d->target_lock, flags);
 	to = rcu_dereference(d->targets);
 	tn->nr = to->nr - 1;
-	dprintk(debug, "disk %s %d old targets at %px, %d new at %p\n", d->name,
+	dprintk(debug, "disk %s %d old targets at %px, %d new at %px\n", d->name,
 		to->nr, to, tn->nr, tn);
 	for (i = j = 0; i < to->nr; i++) {
 		if (to->tgts[i] != t) {
@@ -2018,7 +1979,7 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 
 	cmd = blk_mq_rq_to_pdu(req);
 	cmd->ethblk_hdr.op = ETHBLK_OP_ID;
-	cmd->ethblk_hdr.lba = t->id;
+	cmd->ethblk_hdr.lba = cpu_to_be64(t->id);
 
 	blk_execute_rq_nowait(d->queue, NULL, req, 0,
 			      ethblk_initiator_cmd_drv_in_done);
@@ -2042,7 +2003,7 @@ static void ethblk_initiator_tgt_checksum(struct ethblk_initiator_tgt *t,
 
 	cmd = blk_mq_rq_to_pdu(req);
 	cmd->ethblk_hdr.op = ETHBLK_OP_CHECKSUM;
-	cmd->ethblk_hdr.lba = lba;
+	cmd->ethblk_hdr.lba = cpu_to_be64(lba);
 	cmd->ethblk_hdr.num_sectors = sectors;
 
 	blk_execute_rq_nowait(d->queue, NULL, req, 0,
@@ -2100,12 +2061,13 @@ ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
 	struct ethblk_initiator_tgt *t;
 	struct ethblk_cfg_hdr *cfg = (struct ethblk_cfg_hdr *)(rep_hdr + 1);
 	sector_t ssize = be64_to_cpu(cfg->num_sectors);
-	int tgt_id = rep_hdr->lba;
+	int tgt_id = be64_to_cpu(rep_hdr->lba);
 
 	if (d->ssize != ssize) {
 		dprintk(info, "disk %s new size %llu sectors\n", d->name,
 			(long long)ssize);
 		d->ssize = ssize;
+// FIXME set_capacity_revalidate_and_notify ?
 		set_capacity(d->gd, ssize);
 		schedule_work(&d->cap_work);
 	}
@@ -2156,7 +2118,7 @@ static void ethblk_initiator_checksum_cmd_complete(struct ethblk_initiator_cmd *
 						   struct ethblk_hdr *rep_hdr)
 {
 	__u32 *rep_sha_dg = (__u32 *)(rep_hdr + 1);
-	__u32 sha_dg[SHA_DIGEST_WORDS];
+	__be32 sha_dg[SHA_DIGEST_WORDS];
 	char s[SHA_DIGEST_WORDS * 4 * 2 + 1] = { 0 };
 	int i;
 
@@ -2247,7 +2209,7 @@ void ethblk_initiator_cmd_response(struct sk_buff *skb, unsigned comp_cpu)
 	unsigned short drv_id;
 	unsigned int cmd_nr, gen_id, cmd_gen_id;
 
-	dprintk(debug, "skb = %p\n", skb);
+	dprintk(debug, "skb = %px\n", skb);
 	drv_id = be16_to_cpu(rep_hdr->drv_id);
 	d = ethblk_initiator_find_disk(drv_id, false);
 	if (!d) {
@@ -2366,7 +2328,6 @@ static void ethblk_initiator_prepare_cfg_pkts(unsigned short drv_id,
 		ETHBLK_HDR_SET_FLAGS(req_hdr, ETHBLK_PROTO_VERSION, 0, 0);
 		req_hdr->drv_id = cpu_to_be16(drv_id);
 		req_hdr->op = ETHBLK_OP_DISCOVER;
-		/* FIXME send IP address as well  */
 	cont:
 		dev_put(ifp);
 	}
@@ -2379,7 +2340,11 @@ static void ethblk_initiator_discover(void)
 	struct sk_buff *skb;
 
 	skb_queue_head_init(&queue);
-	/* FIXME make L3 discoverable */
+	/* NOTE
+	 * DISCOVER is L2 broadcast
+	 * Target answers with IP hint (if configured).
+	 * Initiator automatically picks tgt IP up.
+	 */
 	ethblk_initiator_prepare_cfg_pkts(0xffff, &queue);
 	while ((skb = skb_dequeue(&queue))) {
 		ethblk_network_xmit_skb(skb);
@@ -2415,8 +2380,6 @@ void ethblk_initiator_handle_cfg_change(struct sk_buff *in_skb)
 	req_hdr->op = ETHBLK_OP_DISCOVER;
 
 	ethblk_network_xmit_skb(skb);
-
-	/* FIXME send IP address as well  */
 err:
 	dev_put(in_skb->dev);
 	rcu_read_unlock();
@@ -2436,7 +2399,7 @@ static void ethblk_initiator_tgt_free_deferred(struct work_struct *w)
 	struct ethblk_initiator_tgt *t =
 		container_of(w, struct ethblk_initiator_tgt, free_work);
 
-	dprintk(info, "disk %s freeing target %s %p\n", t->d->name, t->name, t);
+	dprintk(info, "disk %s freeing target %s %px\n", t->d->name, t->name, t);
 	sysfs_remove_group(&t->kobj, &ethblk_initiator_disk_tgt_group);
 	kobject_del(&t->kobj);
 	ethblk_initiator_tgt_stat_free(t);
@@ -2558,26 +2521,24 @@ static struct kobj_type ethblk_sysfs_initiator_ktype = {
 
 static void ethblk_initiator_netdevice_unregister(struct net_device *nd)
 {
-	struct ethblk_initiator_disk *d, *n;
+	struct ethblk_initiator_disk *d;
 	struct ethblk_initiator_tgt_array *ta;
 	struct ethblk_initiator_tgt *t;
-	unsigned long flags;
 	int i;
+	unsigned long drv_id;
 
 	dprintk(info, "nd %px name %s\n", nd, nd->name);
-	mutex_lock(&ethblk_initiator_disks_lock);
-	list_for_each_entry_safe (d, n, &ethblk_initiator_disks, list) {
+	xa_for_each(&ethblk_initiator_disks, drv_id, d) {
 	again:
 		rcu_read_lock();
-		spin_lock_irqsave(&d->target_lock, flags);
+		spin_lock_bh(&d->target_lock);
 		ta = rcu_dereference(d->targets);
 		if (ta->nr) {
 			for (i = 0; i < ta->nr; i++) {
 				t = ta->tgts[i];
 				if (nd == t->nd) {
 					ethblk_initiator_get_tgt(t);
-					spin_unlock_irqrestore(&d->target_lock,
-							       flags);
+					spin_unlock_bh(&d->target_lock);
 					rcu_read_unlock();
 					ethblk_initiator_disk_remove_target(t);
 					ethblk_initiator_put_tgt(t);
@@ -2585,25 +2546,23 @@ static void ethblk_initiator_netdevice_unregister(struct net_device *nd)
 				}
 			}
 		}
-		spin_unlock_irqrestore(&d->target_lock, flags);
+		spin_unlock_bh(&d->target_lock);
 		rcu_read_unlock();
 	}
-	mutex_unlock(&ethblk_initiator_disks_lock);
 }
 
 static void ethblk_initiator_netdevice_change_mtu(struct net_device *nd)
 {
-	struct ethblk_initiator_disk *d, *n;
+	struct ethblk_initiator_disk *d;
 	struct ethblk_initiator_tgt_array *ta;
 	struct ethblk_initiator_tgt *t;
-	unsigned long flags;
 	int i;
+	unsigned long drv_id;
 
 	dprintk(info, "nd %px name %s mtu %d\n", nd, nd->name, nd->mtu);
-	mutex_lock(&ethblk_initiator_disks_lock);
-	list_for_each_entry_safe (d, n, &ethblk_initiator_disks, list) {
+	xa_for_each(&ethblk_initiator_disks, drv_id, d) {
 		rcu_read_lock();
-		spin_lock_irqsave(&d->target_lock, flags);
+		spin_lock_bh(&d->target_lock);
 		ta = rcu_dereference(d->targets);
 		if (ta->nr) {
 			for (i = 0; i < ta->nr; i++) {
@@ -2614,19 +2573,18 @@ static void ethblk_initiator_netdevice_change_mtu(struct net_device *nd)
 				}
 			}
 		}
-		spin_unlock_irqrestore(&d->target_lock, flags);
+		spin_unlock_bh(&d->target_lock);
 		rcu_read_unlock();
 	}
-	mutex_unlock(&ethblk_initiator_disks_lock);
 }
 
 static void ethblk_initiator_netdevice_up(struct net_device *nd)
 {
-	struct ethblk_initiator_disk *d, *n;
+	struct ethblk_initiator_disk *d;
 	struct ethblk_initiator_tgt_array *ta;
 	struct ethblk_initiator_tgt *t;
-	unsigned long flags;
 	int i;
+	unsigned long drv_id;
 	__be32 ip = ethblk_network_if_get_saddr_unlocked(nd);
 	unsigned char *p = (unsigned char *)&ip;
 
@@ -2634,10 +2592,9 @@ static void ethblk_initiator_netdevice_up(struct net_device *nd)
 	dprintk(info, "nd %px name %s addr %pI4\n",
 		nd, nd->name, p);
 
-	mutex_lock(&ethblk_initiator_disks_lock);
-	list_for_each_entry_safe (d, n, &ethblk_initiator_disks, list) {
+	xa_for_each(&ethblk_initiator_disks, drv_id, d) {
 		rcu_read_lock();
-		spin_lock_irqsave(&d->target_lock, flags);
+		spin_lock_bh(&d->target_lock);
 		ta = rcu_dereference(d->targets);
 		if (ta->nr) {
 			for (i = 0; i < ta->nr; i++) {
@@ -2649,10 +2606,9 @@ static void ethblk_initiator_netdevice_up(struct net_device *nd)
 				}
 			}
 		}
-		spin_unlock_irqrestore(&d->target_lock, flags);
+		spin_unlock_bh(&d->target_lock);
 		rcu_read_unlock();
 	}
-	mutex_unlock(&ethblk_initiator_disks_lock);
 }
 
 static int ethblk_initiator_netdevice_event(struct notifier_block *unused,
@@ -2758,14 +2714,13 @@ static struct notifier_block ethblk_initiator_netdevice_notifier = {
 int __init ethblk_initiator_start(struct kobject *parent)
 {
 	int ret;
+	int tag_size = 1UL << (8 * (sizeof_field(struct ethblk_hdr, tag) / 2));
 
 	ret = ethblk_initiator_start_workers();
 	if (ret) {
 		dprintk(err, "can't starts workers: %d\n", ret);
 		goto out;
 	}
-
-	INIT_LIST_HEAD(&ethblk_initiator_disks);
 
 	ret = register_netdevice_notifier(&ethblk_initiator_netdevice_notifier);
 	if (ret) {
@@ -2789,8 +2744,8 @@ int __init ethblk_initiator_start(struct kobject *parent)
 	if (!num_hw_queues)
 		num_hw_queues = num_online_cpus();
 
-	if ((num_hw_queues + 1) * queue_depth >= 0x10000) { // FIXME
-		num_hw_queues = 0x10000 / queue_depth / 2;
+	if ((num_hw_queues + 1) * queue_depth >= tag_size) {
+		num_hw_queues = tag_size / queue_depth / 2;
 	}
 	dprintk(info,
 		"using Ethernet packet type 0x%04x, disk major %d, "

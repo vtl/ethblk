@@ -30,7 +30,7 @@ struct ethblk_target_disk_ini {
 	struct list_head list;
 	struct rcu_head rcu;
 	unsigned char mac[ETH_ALEN];
-	char name[ETH_ALEN * 3 + IFNAMSIZ];
+	char name[ETH_ALEN * 3 + IFNAMSIZ + 1];
 	__be32 ip;
 	struct net_device *nd;
 	struct ethblk_target_disk *d;
@@ -42,7 +42,6 @@ struct ethblk_target_disk_ini {
 };
 
 struct ethblk_target_disk {
-	struct list_head list;
 	struct rcu_head rcu;
 	unsigned short drv_id;
 	struct list_head initiators;

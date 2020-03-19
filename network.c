@@ -47,18 +47,20 @@ out:
 __be32 ethblk_network_if_get_saddr_unlocked(struct net_device *nd)
 {
 	struct in_device *in_dev;
-	struct in_ifaddr **ifap = NULL;
 	struct in_ifaddr *ifa = NULL;
 	__be32 ret = 0;
 
+	rcu_read_lock();
 	in_dev = __in_dev_get_rtnl(nd);
 	if (in_dev) {
-		for (ifap = &in_dev->ifa_list; (ifa = *ifap) != NULL;
-		     ifap = &ifa->ifa_next) {
+		for (ifa = rcu_dereference(in_dev->ifa_list);
+		     ifa != NULL;
+		     ifa = rcu_dereference(ifa->ifa_next)) {
 			ret = ifa->ifa_address;
 			break;
 		}
 	}
+	rcu_read_unlock();
 	return ret;
 }
 
