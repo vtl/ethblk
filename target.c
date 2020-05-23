@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2019 Vitaly Mayatskikh <v.mayatskih@gmail.com>
+ * Copyright (C) 2019, 2020 Vitaly Mayatskikh <v.mayatskih@gmail.com>
  *
  * This work is licensed under the terms of the GNU GPL, version 2.
  *
-*/
+ */
 
 #include <linux/blk-mq.h>
 #include <linux/module.h>
@@ -17,7 +17,8 @@
 
 static int force_dma_alignment = 511;
 module_param(force_dma_alignment, int, 0644);
-MODULE_PARM_DESC(force_dma_alignment, "Force DMA alignment of backing store (511 by default)");
+MODULE_PARM_DESC(force_dma_alignment,
+		 "Force DMA alignment of backing store (511 by default)");
 
 static bool target_running = false;
 
@@ -131,7 +132,7 @@ ethblk_target_disk_initiator_find(struct ethblk_target_disk *d,
 
 	rcu_read_lock();
 	list_for_each_entry_rcu (ini, &d->initiators, list) {
-// FIXME xarray too?
+		/* FIXME xarray, too? */
 		if ((nd == ini->nd) && ether_addr_equal(mac, ini->mac)) {
 			ethblk_target_get_ini(ini);
 			goto out;
@@ -208,7 +209,7 @@ static void ethblk_target_announce(struct ethblk_target_disk_ini *ini)
 {
 	struct ethblk_hdr *req_hdr;
 	struct sk_buff *skb;
-	int hdr_size = sizeof(struct ethblk_hdr);// + sizeof(struct ethblk_cfg_hdr);
+	int hdr_size = sizeof(struct ethblk_hdr);
 
 	rcu_read_lock();
 	dev_hold(ini->nd);
@@ -232,8 +233,6 @@ static void ethblk_target_announce(struct ethblk_target_disk_ini *ini)
 	req_hdr->op = ETHBLK_OP_CFG_CHANGE;
 
 	ethblk_network_xmit_skb(skb);
-
-	/* FIXME send IP address as well  */
 err:
 	dev_put(ini->nd);
 	rcu_read_unlock();
@@ -368,7 +367,8 @@ static void ethblk_target_ini_free(struct percpu_ref *ref)
 	struct ethblk_target_disk_ini *ini =
 		container_of(ref, struct ethblk_target_disk_ini, ref);
 
-	dprintk(info, "disk %s ini %s %px schedule freeing\n", ini->d->name, ini->name, ini);
+	dprintk(info, "disk %s ini %s %px schedule freeing\n",
+		ini->d->name, ini->name, ini);
 
 	schedule_work(&ini->free_work);
 }
@@ -379,7 +379,6 @@ ethblk_target_disk_delete_initiator(struct ethblk_target_disk_ini *ini)
 	dprintk(info, "disk %s deleting initiator %s\n", ini->d->name,
 		ini->name);
 
-// NOTE	ini->d->initiator_lock) is already held
 	list_del_rcu(&ini->list);
 
 	percpu_ref_kill(&ini->ref);
@@ -395,10 +394,9 @@ ethblk_target_disk_find_and_delete_initiator(struct ethblk_target_disk *d,
 	struct ethblk_target_disk_ini *ini;
 	struct net_device *nd;
 	int ret;
-	char s[ETH_ALEN * 3 + IFNAMSIZ];
+	char s[ETH_ALEN * 3 + IFNAMSIZ + 1];
 
-	snprintf(s, sizeof(s), "%s_%02x:%02x:%02x:%02x:%02x:%02x", iface,
-		 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	snprintf(s, sizeof(s), "%s_%pM", iface, mac);
 	dprintk(debug, "disk %s deleting initiator %s\n", d->name, s);
 
 	nd = dev_get_by_name(&init_net, iface);
@@ -461,10 +459,6 @@ static void ethblk_target_destroy_disk_deferred(struct work_struct *w)
 	dprintk(info, "disk %s\n", d->name);
 	percpu_ref_kill(&d->ref);
 	ethblk_target_disk_inis_free(d);
-
-	/* NOTE can't wait for completion - disk_free will be scheduled as */
-	/* work, and it may get added to the same work queue we currently */
-	/* run on */
 }
 
 static ssize_t ethblk_target_disk_destroy_store(struct kobject *kobj,
@@ -595,14 +589,9 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	struct request_queue *q;
 
 	dprintk(info, "creating disk drv_id:%d path:%s\n", drv_id, path);
-	/* FIXME do mutex_lock only for list_add_rcu
-    rest is under rcu_lock
-    or add empty disk struct to the list and set the flag that it is initing */
-
 	d = xa_load(&ethblk_target_disks, drv_id);
 	if (d) {
 		dprintk(err, "disk %s already exists: %px\n", d->name, d);
-// FIXME review and remove		ethblk_target_put_disk(d);
 		ret = -EEXIST;
 		goto out;
 	}
@@ -647,7 +636,8 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	d->old_dma_alignment = q->dma_alignment;
 	if (q->dma_alignment != force_dma_alignment) {
 		blk_queue_dma_alignment(q, force_dma_alignment);
-		dprintk(info, "disk %s backing store %s has new dma alignment %d\n", d->name, path, q->dma_alignment);
+		dprintk(info, "disk %s backing store %s new dma alignment %d\n",
+			d->name, path, q->dma_alignment);
 	}
 
 	ret = kobject_init_and_add(&d->kobj, &ethblk_target_disk_kobj_type,
@@ -678,7 +668,8 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 		goto out_d_inis_kobj;
 	}
 
-	ret = bioset_init(&d->bs, blk_queue_depth(d->bd->bd_queue) * num_online_cpus(),
+	ret = bioset_init(&d->bs,
+			  blk_queue_depth(d->bd->bd_queue) * num_online_cpus(),
 			  0, BIOSET_NEED_BVECS);
 	if (ret) {
 		dprintk(err, "disk %s can't init bioset: %d\n", d->name, ret);
@@ -726,8 +717,7 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 
 	blk_queue_dma_alignment(d->bd->bd_queue, d->old_dma_alignment);
 	blkdev_put(d->bd, FMODE_READ | FMODE_WRITE);
-	/* Initiators must be already freed by now as they hold
-	   refcounts to the disk */
+
 	free_percpu(d->stat);
 	kfree(d->backend_path);
 	bioset_exit(&d->bs);
@@ -815,7 +805,8 @@ static void
 ethblk_target_cmd_reply_fill_skb_headers(struct ethblk_target_cmd *cmd)
 {
 	if (cmd->l3) {
-		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(cmd->rep_skb);
+		struct ethhdr *eth =
+			(struct ethhdr *)skb_mac_header(cmd->rep_skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
 		struct ethhdr *s_eth =
@@ -823,7 +814,6 @@ ethblk_target_cmd_reply_fill_skb_headers(struct ethblk_target_cmd *cmd)
 		struct iphdr *s_ip = (struct iphdr *)(s_eth + 1);
 		struct udphdr *s_udp = (struct udphdr *)(s_ip + 1);
 
-		/* make space for eth, ip and udp headers (ethblk hdr follows) */
 		skb_put(cmd->rep_skb, sizeof(struct ethhdr) +
 			sizeof(struct iphdr) +
 			sizeof(struct udphdr));
@@ -849,8 +839,10 @@ static void
 ethblk_target_cmd_reply_finalize_skb_headers(struct ethblk_target_cmd *cmd)
 {
 	if (cmd->l3) {
-		struct ethblk_hdr *rep_hdr = ethblk_network_skb_get_hdr(cmd->rep_skb);
-		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(cmd->rep_skb);
+		struct ethblk_hdr *rep_hdr =
+			ethblk_network_skb_get_hdr(cmd->rep_skb);
+		struct ethhdr *eth =
+			(struct ethhdr *)skb_mac_header(cmd->rep_skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
 
@@ -911,7 +903,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	ethblk_target_cmd_reply_fill_skb_headers(cmd);
 	rep_hdr = ethblk_network_skb_get_hdr(rep_skb);
 
-	skb_put(rep_skb, sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr));
+	skb_put(rep_skb, ETHBLK_CFG_REPLY_SIZE);
 
 	ether_addr_copy(rep_hdr->src, req_skb->dev->dev_addr);
 	ether_addr_copy(rep_hdr->dst, req_hdr->src);
@@ -928,7 +920,8 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	rep_cfg_hdr = (struct ethblk_cfg_hdr *)(rep_hdr + 1);
 	rep_cfg_hdr->q_depth = cpu_to_be16(blk_queue_depth(cmd->d->bd->bd_queue));
 	rep_cfg_hdr->num_queues = cpu_to_be16(min(req_skb->dev->num_rx_queues, num_online_cpus()));
-	rep_cfg_hdr->num_sectors = cpu_to_be64(i_size_read(cmd->d->bd->bd_inode) >> 9);  /* FIXME send disk size and uuid */
+	rep_cfg_hdr->num_sectors =
+		cpu_to_be64(i_size_read(cmd->d->bd->bd_inode) >> SECTOR_SHIFT);
 	uuid_copy((uuid_t *)rep_cfg_hdr->uuid, &cmd->d->uuid);
 
 	NET_STAT_INC(cmd->ini, cnt.rx_count);
@@ -1000,8 +993,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	rep_skb_alloc_len = sizeof(struct ethblk_hdr);
 
 	if (cmd->l3)
-		rep_skb_alloc_len += sizeof(struct ethhdr) + sizeof(struct iphdr) +
-			sizeof(struct udphdr);
+		rep_skb_alloc_len += ETHBLK_HDR_L3_SIZE;
 
 	rep_skb = ethblk_network_new_skb_with_payload(rep_skb_alloc_len,
 						      (write ? 0 : len));
@@ -1191,6 +1183,8 @@ static void ethblk_target_cmd_checksum_complete(struct bio *bio)
 	char *p;
 	int i;
 	struct ethblk_target_checksum_cmd *cs_cmd = bio->bi_private;
+	int block_size = SECTOR_SIZE / 8;
+
 	cs_cmd->work_type = ETHBLK_TARGET_CMD_WORK_TYPE_CHECKSUM;
 
 	dprintk(debug, "disk %s lba %llu sectors remaining %d\n",
@@ -1203,10 +1197,10 @@ static void ethblk_target_cmd_checksum_complete(struct bio *bio)
 	}
 
 	p = cs_cmd->data;
-	for (i = 0; i < cs_cmd->data_len / 512 / 8; i++, p += 512 / 8)
+	for (i = 0; i < cs_cmd->data_len / block_size; i++, p += block_size)
 		sha_transform(cs_cmd->sha_dg, p, cs_cmd->sha_ws);
-	cs_cmd->lba += cs_cmd->data_len >> 9;
-	cs_cmd->sectors -= cs_cmd->data_len >> 9;
+	cs_cmd->lba += cs_cmd->data_len >> SECTOR_SHIFT;
+	cs_cmd->sectors -= cs_cmd->data_len >> SECTOR_SHIFT;
 
 	bio_put(cs_cmd->bio);
 	cs_cmd->bio = NULL;
@@ -1223,7 +1217,8 @@ error:
 	ethblk_target_checksum_cmd_free(cs_cmd);
 }
 
-static struct bio *_bio_map_kern(struct request_queue *q, void *data, unsigned int len,
+static struct bio *_bio_map_kern(struct request_queue *q, void *data,
+				 unsigned int len,
 				 gfp_t gfp_mask)
 {
 	unsigned long kaddr = (unsigned long)data;
@@ -1262,7 +1257,8 @@ static struct bio *_bio_map_kern(struct request_queue *q, void *data, unsigned i
 	return bio;
 }
 
-static void ethblk_target_checksum_cmd_iter(struct ethblk_target_checksum_cmd *cs_cmd)
+static void ethblk_target_checksum_cmd_iter(
+	struct ethblk_target_checksum_cmd *cs_cmd)
 {
 	struct ethblk_target_disk *d = cs_cmd->cmd->d;
 	struct bio *bio;
@@ -1286,7 +1282,8 @@ static void ethblk_target_checksum_cmd_iter(struct ethblk_target_checksum_cmd *c
 		return;
 	}
 
-	bio = _bio_map_kern(bdev_get_queue(d->bd), cs_cmd->data, cs_cmd->data_len, GFP_KERNEL);
+	bio = _bio_map_kern(bdev_get_queue(d->bd), cs_cmd->data,
+			    cs_cmd->data_len, GFP_KERNEL);
 
 	if (IS_ERR(bio)) {
 		dprintk_ratelimit(err, "disk %s can't alloc bio\n", d->name);
@@ -1333,7 +1330,8 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 
 	stat = this_cpu_ptr(d->stat);
 
-	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
+	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src,
+						     req_skb->dev);
 
 	if (!cmd->ini) {
 		dprintk_ratelimit(err,
@@ -1355,8 +1353,7 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 	rep_skb_alloc_len = sizeof(struct ethblk_hdr) + len;
 
 	if (cmd->l3)
-		rep_skb_alloc_len += sizeof(struct ethhdr) + sizeof(struct iphdr) +
-			sizeof(struct udphdr);
+		rep_skb_alloc_len += ETHBLK_HDR_L3_SIZE;
 
 	rep_skb = ethblk_network_new_skb(rep_skb_alloc_len);
 
@@ -1403,7 +1400,8 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 	cs_cmd->sectors = req_hdr->num_sectors;
 	cs_cmd->rep_hdr = rep_hdr;
 	sha_init(cs_cmd->sha_dg);
-	cs_cmd->data_len = min((int)(cs_cmd->sectors << 9), (int)(PAGE_SIZE * 4));
+	cs_cmd->data_len = min((int)(cs_cmd->sectors << SECTOR_SHIFT),
+			       (int)(PAGE_SIZE * 4));
 	cs_cmd->order = get_order(PAGE_ALIGN(cs_cmd->data_len));
 	cs_cmd->data = (void *)__get_free_pages(GFP_KERNEL, cs_cmd->order);
 	if (!cs_cmd->data) {
@@ -1587,7 +1585,6 @@ void ethblk_target_handle_discover(struct sk_buff *skb)
 		ethblk_target_put_ini(ini);
 	}
 }
-
 
 static struct ethblk_target_disk *ethblk_target_find_disk(unsigned short drv_id)
 {

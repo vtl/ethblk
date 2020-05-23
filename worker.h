@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2019 Vitaly Mayatskikh <v.mayatskih@gmail.com>
+ * Copyright (C) 2019, 2020 Vitaly Mayatskikh <v.mayatskih@gmail.com>
  *
  * This work is licensed under the terms of the GNU GPL, version 2.
  *
-*/
+ */
 
 #ifndef _ETHBLK_WORKER_H_
 #define _ETHBLK_WORKER_H_

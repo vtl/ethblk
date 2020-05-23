@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2019 Vitaly Mayatskikh <v.mayatskih@gmail.com>
+ * Copyright (C) 2019, 2020 Vitaly Mayatskikh <v.mayatskih@gmail.com>
  *
  * This work is licensed under the terms of the GNU GPL, version 2.
  *
-*/
+ */
 
 #include <linux/hdreg.h>
 #include <linux/idr.h>
@@ -801,7 +801,7 @@ static void ethblk_initiator_disk_set_capacity_work(struct work_struct *w)
 	struct block_device *bd = bdget_disk(d->gd, 0);
 
 	if (bd) {
-		loff_t size = (loff_t)get_capacity(d->gd) << 9;
+		loff_t size = (loff_t)get_capacity(d->gd) << SECTOR_SHIFT;
 		dprintk(info, "disk %s new size is %lld bytes\n", d->name,
 			size);
 		inode_lock(bd->bd_inode);
@@ -942,10 +942,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
 
-		/* make space for eth, ip and udp headers (ethblk hdr follows) */
-		skb_put(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) +
-				     sizeof(struct udphdr));
-
+		skb_put(skb, ETHBLK_HDR_L3_SIZE);
 		skb->protocol = htons(ETH_P_IP);
 		eth->h_proto = htons(ETH_P_IP);
 		ip->version = 4;
@@ -1202,7 +1199,7 @@ ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd, bool last)
 	skb_put(skb, sizeof(struct ethblk_hdr));
 
 	req_bytes = blk_rq_bytes(req);
-	cmd->ethblk_hdr.num_sectors = req_bytes / 512;
+	cmd->ethblk_hdr.num_sectors = req_bytes / SECTOR_SIZE;
 
 	lba = blk_rq_pos(req);
 	cmd->ethblk_hdr.lba = cpu_to_be64(lba);
@@ -1482,10 +1479,10 @@ ethblk_initiator_disk_set_max_payload(struct ethblk_initiator_disk *d,
 	d->max_payload = max_payload;
 	blk_mq_freeze_queue(q);
 	blk_mq_quiesce_queue(q);
-	q->limits.max_dev_sectors = max_payload / 512;
+	q->limits.max_dev_sectors = max_payload / SECTOR_SIZE;
 	blk_queue_io_opt(q, max_payload);
-	blk_queue_max_hw_sectors(q, max_payload / 512);
-	blk_queue_max_segments(q, max_payload / 512);
+	blk_queue_max_hw_sectors(q, max_payload / SECTOR_SIZE);
+	blk_queue_max_segments(q, max_payload / SECTOR_SIZE);
 	blk_queue_max_segment_size(q, max_payload);
 	blk_mq_unquiesce_queue(q);
 	blk_mq_unfreeze_queue(q);
@@ -1578,9 +1575,9 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 		goto err_tag_set;
 	}
 
-	blk_queue_logical_block_size(q, 512);
-	blk_queue_physical_block_size(q, 512);
-	blk_queue_io_min(q, 512);
+	blk_queue_logical_block_size(q, SECTOR_SIZE);
+	blk_queue_physical_block_size(q, SECTOR_SIZE);
+	blk_queue_io_min(q, SECTOR_SIZE);
 	blk_queue_bounce_limit(q, BLK_BOUNCE_ANY);
 
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, q);
@@ -1592,7 +1589,9 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	d->queue = gd->queue = q;
 
 	d->max_possible_payload = INT_MAX;
-	ethblk_initiator_disk_set_max_payload(d, 1024, INT_MAX);
+	ethblk_initiator_disk_set_max_payload(d,
+		(ETH_DATA_LEN - sizeof(struct ethblk_hdr)) / SECTOR_SIZE,
+		INT_MAX);
 
 	gd->major = disk_major;
 	gd->first_minor = first_minor;
@@ -2139,8 +2138,7 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 	req_hdr = &cmd->ethblk_hdr;
 
 	if (ethblk_network_skb_is_l3(skb))
-		skb_pull(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) +
-				      sizeof(struct udphdr));
+		skb_pull(skb, ETHBLK_HDR_L3_SIZE);
 
 	rep_hdr = (struct ethblk_hdr *)skb->data;
 	skb_pull(skb, sizeof(struct ethblk_hdr));
@@ -2151,7 +2149,7 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 		goto out;
 	}
 
-	n = req_hdr->num_sectors << 9;
+	n = req_hdr->num_sectors << SECTOR_SHIFT;
 	switch (req_hdr->op) {
 	case ETHBLK_OP_READ:
 		if (skb->len < n) {
@@ -2305,21 +2303,20 @@ static void ethblk_initiator_prepare_cfg_pkts(unsigned short drv_id,
 	struct ethblk_hdr *req_hdr;
 	struct sk_buff *skb;
 	struct net_device *ifp;
-	int hdr_size = sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr);
 
 	rcu_read_lock();
 	for_each_netdev_rcu (&init_net, ifp) {
 		dev_hold(ifp);
-		skb = ethblk_network_new_skb(hdr_size);
+		skb = ethblk_network_new_skb(ETHBLK_CFG_REPLY_SIZE);
 		if (skb == NULL) {
 			dprintk(err, "skb alloc failure\n");
 			goto cont;
 		}
-		skb_put(skb, hdr_size);
+		skb_put(skb, ETHBLK_CFG_REPLY_SIZE);
 		skb->dev = ifp;
 		__skb_queue_tail(queue, skb);
 		req_hdr = (struct ethblk_hdr *)skb_mac_header(skb);
-		memset(req_hdr, 0, hdr_size);
+		memset(req_hdr, 0, ETHBLK_CFG_REPLY_SIZE);
 
 		eth_broadcast_addr(req_hdr->dst);
 		ether_addr_copy(req_hdr->src, ifp->dev_addr);
@@ -2356,20 +2353,19 @@ void ethblk_initiator_handle_cfg_change(struct sk_buff *in_skb)
 	struct ethblk_hdr *in_hdr = ethblk_network_skb_get_hdr(in_skb);
 	struct ethblk_hdr *req_hdr;
 	struct sk_buff *skb;
-	int hdr_size = sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr);
 
 	rcu_read_lock();
 	dev_hold(in_skb->dev);
-	skb = ethblk_network_new_skb(hdr_size);
+	skb = ethblk_network_new_skb(ETHBLK_CFG_REPLY_SIZE);
 	if (skb == NULL) {
 		dprintk(err, "skb alloc failure\n");
 		goto err;
 	}
-	skb_put(skb, hdr_size);
+	skb_put(skb, ETHBLK_CFG_REPLY_SIZE);
 	skb->dev = in_skb->dev;
 
 	req_hdr = (struct ethblk_hdr *)skb_mac_header(skb);
-	memset(req_hdr, 0, hdr_size);
+	memset(req_hdr, 0, ETHBLK_CFG_REPLY_SIZE);
 
 	ether_addr_copy(req_hdr->dst, in_hdr->src);
 	ether_addr_copy(req_hdr->src, skb->dev->dev_addr);

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2019 Vitaly Mayatskikh <v.mayatskih@gmail.com>
+ * Copyright (C) 2019, 2020 Vitaly Mayatskikh <v.mayatskih@gmail.com>
  *
  * This work is licensed under the terms of the GNU GPL, version 2.
  *
-*/
+ */
 
 #include <linux/module.h>
 #include "ethblk.h"
@@ -128,8 +128,8 @@ static int ethblk_worker_pool_rps_init(struct ethblk_worker_pool *p)
 	}
 
 	switch (_rps) {
-	case ETHBLK_WORKER_RPS_AUTO:
-		/* start as SAME then rebalance */
+	case ETHBLK_WORKER_RPS_AUTO: /* start as SAME then rebalance */
+		/* fall through */
 	case ETHBLK_WORKER_RPS_SAME:
 		for_each_possible_cpu(cpu) {
 			p->rps.cpu_out[cpu] = cpu;
@@ -172,7 +172,6 @@ static void ethblk_worker_pool_rps_reconfig(struct timer_list *tl)
 	if (rps != ETHBLK_WORKER_RPS_AUTO)
 		return;
 
-	/* in atomic context */
 	in_cpumask = kzalloc(sizeof(struct cpumask), GFP_ATOMIC);
 	if (!in_cpumask)
 		goto out;
@@ -298,7 +297,7 @@ void ethblk_worker_destroy_pool(struct ethblk_worker_pool *p)
 		if (w)
 			kthread_destroy_worker(w->worker);
 	}
-/* FIXME sync with dying worker threads */
+
 	for_each_possible_cpu(cpu) {
 		kfree((per_cpu_ptr(p->rps.stat, cpu))->in);
 	}

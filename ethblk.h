@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2019 Vitaly Mayatskikh <v.mayatskih@gmail.com>
+ * Copyright (C) 2019, 2020 Vitaly Mayatskikh <v.mayatskih@gmail.com>
  *
  * This work is licensed under the terms of the GNU GPL, version 2.
  *
-*/
+ */
 #ifndef _ETHBLK_H_
 #define _ETHBLK_H_
 
@@ -112,6 +112,12 @@ struct ethblk_cfg_hdr {
 	__be64 num_sectors;
 	__u8 uuid[UUID_SIZE];
 } __attribute__((packed));
+
+#define ETHBLK_CFG_REPLY_SIZE \
+	(sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr))
+
+#define ETHBLK_HDR_L3_SIZE \
+	(sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr))
 
 void ethblk_net_init(void);
 void ethblk_net_exit(void);
