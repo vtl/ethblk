@@ -18,6 +18,9 @@
 #define ETHBLK_PARTITIONS 16
 
 #define LAT_BUCKETS 64
+#define ETHBLK_INITIATOR_MAX_PAYLOAD 65536
+#define ETHBLK_INITIATOR_CMD_MAX_SKB \
+	(ETHBLK_INITIATOR_MAX_PAYLOAD / 512)
 
 struct ethblk_initiator_net_stat {
 	u32 lat_hist_buckets;
@@ -62,6 +65,7 @@ struct ethblk_initiator_tgt {
 	__be32 dest_ip;
 	bool has_router_mac;
 	unsigned char router_mac[ETH_ALEN];
+	int max_payload;
 	struct ethblk_initiator_disk *d;
 	struct percpu_ref ref;
 	struct net_device *nd;
@@ -76,14 +80,12 @@ struct ethblk_initiator_tgt {
 	char name[ETH_ALEN * 3 + IFNAMSIZ + 1];
 };
 
-#define CMD_TIMEOUT_S 5
+#define CMD_TIMEOUT_S 15
 #define CMD_RETRY_JIFFIES (HZ / 4) /* 250 ms FIXME make RTO */
 
 struct ethblk_initiator_disk_context {
 	int hctx_id;
 	int current_target_idx;
-	unsigned seq;
-	atomic_t in_flight __attribute__((aligned(64)));
 } __attribute__((aligned(64)));
 
 #define ETHBLK_MAX_TARGETS_PER_DISK 64
@@ -102,8 +104,6 @@ struct ethblk_initiator_disk {
 	struct request_queue *queue;
 	struct blk_mq_tag_set tag_set;
 	sector_t ssize;
-	int max_payload;
-	int max_possible_payload;
 	struct ethblk_initiator_tgt_array __rcu *targets;
 	spinlock_t target_lock;
 	int seq_id;
@@ -120,6 +120,7 @@ struct ethblk_initiator_disk {
 	struct ethblk_initiator_net_stat __percpu *stat;
 	char name[16];
 	uuid_t uuid;
+	struct bio_set bio_set;
 };
 
 struct ethblk_initiator_cmd {
@@ -130,7 +131,6 @@ struct ethblk_initiator_cmd {
 	int retries;
 	struct ethblk_initiator_disk *d;
 	struct ethblk_initiator_tgt *t;
-	struct sk_buff *skb;
 	unsigned long time_queued;
 	unsigned long time_requeued;
 	unsigned long time_completed;
@@ -139,6 +139,12 @@ struct ethblk_initiator_cmd {
 	unsigned cpu_submitted;
 	unsigned cpu_completed;
 	struct ethblk_hdr ethblk_hdr;
+	struct bio *bio;
+	int offset;
+	int skb_idx;
+	int nr_skbs;
+	unsigned short *offsets;
+	struct bio **bios;
 } __attribute__((aligned(64)));
 
 void ethblk_initiator_discover_response(struct sk_buff *);

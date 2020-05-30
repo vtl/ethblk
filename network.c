@@ -111,16 +111,13 @@ struct ethblk_hdr *ethblk_network_skb_get_hdr(struct sk_buff *skb)
 {
 	return (struct ethblk_hdr *)(skb_mac_header(skb) +
 				     (ethblk_network_skb_is_l2(skb) ?
-				      0 :
-				      (sizeof(struct ethhdr) +
-				       sizeof(struct iphdr) +
-				       sizeof(struct udphdr))));
+				      0 : ETHBLK_HDR_L3_SIZE));
 }
 
 void *ethblk_network_skb_get_payload(struct sk_buff *skb)
 {
 	return ((unsigned char *)ethblk_network_skb_get_hdr(skb)
-		+ sizeof(struct ethblk_hdr));
+		+ ETHBLK_HDR_SIZE);
 }
 
 int ethblk_network_xmit_skb(struct sk_buff *skb)
@@ -177,12 +174,10 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	/* don't process in net/core/ipv4 */
 	old_skb->pkt_type = PACKET_OTHERHOST;
 
-#ifdef ETHBLK_NETWORK_LINEARIZE_SKB
 	if (skb_linearize(skb)) {
 		dprintk_ratelimit(debug, "drop non-linearized skb %px\n", skb);
 		goto exit;
 	}
-#endif
 
 	skb_push(skb, ETH_HLEN);
 

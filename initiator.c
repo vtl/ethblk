@@ -49,7 +49,7 @@ static int queue_depth = 128;
 module_param(queue_depth, int, 0644);
 MODULE_PARM_DESC(queue_depth, "Initiator disk queue_depth (128 by default)");
 
-#define CMD_TAG_MASK 0x7fff
+#define CMD_TAG_MASK 0xff
 
 #define TAINT_SCORN (1 > (queue_depth / 4) ? 1 : (queue_depth / 4))
 #define TAINT_RELAX 10000
@@ -828,6 +828,7 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 	del_gendisk(d->gd);
 	blk_cleanup_queue(d->queue);
 	blk_mq_free_tag_set(&d->tag_set);
+	bioset_exit(&d->bio_set);
 
 #ifdef FIX_Q_USAGE_COUNTER
 	/*
@@ -941,6 +942,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
+		int port = (cmd->hctx_idx + (cmd->skb_idx % 4)) % cmd->t->num_queues;
 
 		skb_put(skb, ETHBLK_HDR_L3_SIZE);
 		skb->protocol = htons(ETH_P_IP);
@@ -953,7 +955,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		ip->id = 0;
 		/* NOTE to fool Mellanox packet steering we have to
 		 * use semi-random source/dest ports */
-		udp->source = htons(eth_p_type + (cmd->hctx_idx % cmd->t->num_queues));
+		udp->source = htons(eth_p_type + port);
 		udp->dest = htons(eth_p_type);
 	} else {
 		skb->protocol = htons(eth_p_type);
@@ -969,6 +971,7 @@ ethblk_initiator_cmd_finalize_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct ethhdr *eth = eth_hdr(skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
+		int tot_len;
 
 		ether_addr_copy(eth->h_source, h->src);
 		ip->saddr = cmd->t->local_ip;
@@ -987,23 +990,24 @@ ethblk_initiator_cmd_finalize_skb_headers(struct ethblk_initiator_cmd *cmd,
 			ether_addr_copy(eth->h_dest, h->dst);
 		}
 
-		ip->tot_len = htons(skb->len - sizeof(struct ethhdr) +
-				    (skb->data_len));
-		udp->len = htons(ntohs(ip->tot_len) - sizeof(struct iphdr));
+		tot_len = skb->len - ETHBLK_HDR_SIZE + skb->data_len;
+		ip->tot_len = htons(tot_len);
+		udp->len = htons(tot_len - sizeof(struct iphdr));
 		udp->check = 0;
 		ip_send_check(ip);
 	}
 }
 
-static void ethblk_initiator_cmd_hdr_init(struct ethblk_initiator_cmd *cmd)
+static void ethblk_initiator_cmd_hdr_init(struct ethblk_initiator_cmd *cmd,
+					  struct ethblk_hdr *h,
+					  int skb_idx)
 {
 	struct ethblk_initiator_disk *d = cmd->d;
 	struct ethblk_initiator_tgt *t = cmd->t;
-	struct ethblk_hdr *h = &cmd->ethblk_hdr;
 	unsigned int gen_id = cmd->gen_id & CMD_TAG_MASK;
-	unsigned int host_tag = (gen_id << 16) | cmd->id;
+	unsigned int host_tag = (skb_idx << 24) | (gen_id << 16) | cmd->id;
 
-	DEBUG_INI_CMD(debug, cmd, "host_tag = %d", host_tag);
+//	DEBUG_INI_CMD(debug, cmd, "host_tag = %d", host_tag);
 	ether_addr_copy(h->src, t->nd->dev_addr);
 	ether_addr_copy(h->dst, t->mac);
 	h->type = cpu_to_be16(eth_p_type);
@@ -1018,7 +1022,6 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 	struct sk_buff *skb;
 	struct ethblk_hdr *h;
 	struct ethblk_initiator_tgt *t;
-	int hdr_size = sizeof(struct ethblk_hdr);
 
 	t = ethblk_initiator_disk_cmd_get_next_tgt(cmd);
 	if (!t)
@@ -1026,27 +1029,23 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 
 	cmd->t = t; /* this is just for hdr_init */
 	cmd->l3 = t->l3;
-	skb = cmd->skb;
-	skb->truesize -= skb->data_len;
-	skb_shinfo(skb)->nr_frags = skb->data_len = 0;
-	skb_trim(skb, 0);
+	skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
+
 	DEBUG_INI_CMD(debug, cmd, "skb = %px", skb);
 
 	ethblk_initiator_cmd_fill_skb_headers(cmd, skb);
-	skb_put(skb, hdr_size);
+	skb_put(skb, ETHBLK_HDR_SIZE);
 
 	h = ethblk_network_skb_get_hdr(skb);
 
 	cmd->gen_id++;
-	ethblk_initiator_cmd_hdr_init(cmd);
-	memcpy(h, &cmd->ethblk_hdr, sizeof(struct ethblk_hdr));
+	ethblk_initiator_cmd_hdr_init(cmd, &cmd->ethblk_hdr, 0);
+	memcpy(h, &cmd->ethblk_hdr, ETHBLK_HDR_SIZE);
 
 	skb->dev = t->nd;
 
 	ethblk_initiator_cmd_finalize_skb_headers(cmd, skb);
 	cmd->t = NULL;
-
-	skb = skb_get(cmd->skb);
 
 	if (ethblk_network_xmit_skb(skb) == NET_XMIT_DROP) {
 		NET_STAT_INC(t, cnt.tx_dropped);
@@ -1146,104 +1145,342 @@ out_notgt:
 	return t;
 }
 
-static blk_status_t
-ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd, bool last)
-	__must_hold(&cmd->lock)
+static struct bio*
+ethblk_initiator_cmd_rw_split_bio(struct ethblk_initiator_cmd *cmd,
+				  struct bio *bio)
 {
-	struct sk_buff *skb = NULL;
-	struct ethblk_hdr *h;
-	struct ethblk_initiator_tgt *t;
-	struct bio_vec bv;
-	struct req_iterator iter;
+	struct bio *split = NULL;
+	int skb_bytes;
+	int bio_size = bio_sectors(bio) << SECTOR_SHIFT;
+
+	if (cmd->nr_skbs == ETHBLK_INITIATOR_CMD_MAX_SKB)
+		goto out;
+
+	skb_bytes = min(cmd->t->max_payload, bio_size);
+
+	if (bio_size > skb_bytes) {
+		dprintk(debug, "bio %px size %d > %d, splitting\n", bio, bio_size, skb_bytes);
+		split = bio_split(bio, skb_bytes / SECTOR_SIZE, GFP_ATOMIC, &cmd->d->bio_set);
+		if (!split) {
+			dprintk_ratelimit(err, "can't split bio\n");
+			goto out;
+		}
+	} else {
+		split = bio;
+	}
+
+	DEBUG_INI_CMD(debug, cmd, "skb_idx %d, nr_skbs %d, offset %d, bio %px", cmd->skb_idx, cmd->nr_skbs, cmd->offset, split);
+	cmd->offsets[cmd->skb_idx] = cmd->offset;
+	cmd->offset += skb_bytes;
+	cmd->skb_idx++;
+	cmd->nr_skbs++;
+out:
+	return split;
+}
+
+static struct sk_buff *
+ethblk_initiator_cmd_rw_prepare_skb(struct ethblk_initiator_cmd *cmd,
+				    int skb_idx)
+{
 	struct request *req = blk_mq_rq_from_pdu(cmd);
-	int frag = 0;
-	int req_bytes;
-	blk_status_t status;
-	sector_t lba;
+	struct ethblk_hdr *hdr;
+	struct sk_buff *skb = NULL;
+	int skb_bytes;
 	struct ethhdr *eth;
 	struct iphdr *ip;
 	struct udphdr *udp;
+	struct bio *bio = cmd->bios[skb_idx];
 
-	if (blk_rq_bytes(req) > cmd->d->max_payload) {
-		dprintk_ratelimit(
-			err,
-			"disk %s cmd[%d] req %px req_op %d lba %llu len %u "
-			"retries %d requested > max payload (%d)\n",
-			cmd->d->name, cmd->id, req, req_op(req),
-			(unsigned long long)blk_rq_pos(req), blk_rq_bytes(req),
-			cmd->retries, cmd->d->max_payload);
-		status = BLK_STS_NOTSUPP;
+	if (!bio)
 		goto out;
-	}
 
-	t = ethblk_initiator_disk_cmd_get_next_tgt(cmd);
-
-	if (!t) {
-		DEBUG_INI_CMD(err, cmd, "no target");
-		cmd->t = NULL;
-		status = BLK_STS_NEXUS;
+	skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
+	if (!skb)
 		goto out;
-	}
-	cmd->t = t;
-	cmd->l3 = t->l3;
-	skb = cmd->skb;
-	skb->truesize -= skb->data_len;
-	skb_shinfo(skb)->nr_frags = skb->data_len = 0;
-	skb_trim(skb, 0);
 
 	eth = (struct ethhdr *)skb_mac_header(skb);
 	ip = (struct iphdr *)(eth + 1);
 	udp = (struct udphdr *)(ip + 1);
 
 	ethblk_initiator_cmd_fill_skb_headers(cmd, skb);
-	skb_put(skb, sizeof(struct ethblk_hdr));
+	skb_put(skb, ETHBLK_HDR_SIZE);
 
-	req_bytes = blk_rq_bytes(req);
-	cmd->ethblk_hdr.num_sectors = req_bytes / SECTOR_SIZE;
+	hdr = ethblk_network_skb_get_hdr(skb);
+	skb_bytes = bio_sectors(bio) * SECTOR_SIZE;
 
-	lba = blk_rq_pos(req);
-	cmd->ethblk_hdr.lba = cpu_to_be64(lba);
+	hdr->num_sectors = bio_sectors(bio);
+	hdr->lba = cpu_to_be64(blk_rq_pos(req) + (cmd->offsets[skb_idx] / SECTOR_SIZE));
 
 	if (rq_data_dir(req) == WRITE) {
-		rq_for_each_segment (bv, req, iter) {
-			dprintk(debug,
-				"skb fill frag %d page %px offset %d len %d\n",
-				frag, bv.bv_page, bv.bv_offset, bv.bv_len);
-			skb_fill_page_desc(skb, frag++, bv.bv_page,
-					   bv.bv_offset, bv.bv_len);
-		}
-		skb->len += req_bytes;
-		skb->data_len = req_bytes;
-		skb->truesize += req_bytes;
-		cmd->ethblk_hdr.op = ETHBLK_OP_WRITE;
+		struct bvec_iter bi = bio->bi_iter;
+		struct bio_vec bv;
+		int skb_bytes_remaining = skb_bytes;
+		int frag = 0;
+
+		do {
+			while (bi.bi_size && skb_bytes_remaining) {
+				int bv_bytes;
+
+				bv = bio_iter_iovec(bio, bi);
+				bv_bytes = min((int)bv.bv_len, skb_bytes_remaining);
+
+				dprintk(debug,
+					"skb fill frag %d page %px offset %d len %d\n",
+					frag, bv.bv_page, bv.bv_offset, bv_bytes);
+				skb_fill_page_desc(skb, frag++, bv.bv_page,
+						   bv.bv_offset, bv_bytes);
+				get_page(bv.bv_page);
+				skb_bytes_remaining -= bv_bytes;
+				bio_advance_iter(bio, &bi, bv_bytes);
+			}
+
+			dprintk(debug, "cmd bi.bi_size %d, skb_bytes_remaining %d\n", bi.bi_size, skb_bytes_remaining);
+		} while (bi.bi_size && skb_bytes_remaining);
+
+		skb->len += skb_bytes;
+		skb->data_len = skb_bytes;
+		skb->truesize += skb_bytes;
+		hdr->op = ETHBLK_OP_WRITE;
 	} else {
-		cmd->ethblk_hdr.op = ETHBLK_OP_READ;
+		hdr->op = ETHBLK_OP_READ;
 	}
 
-	h = ethblk_network_skb_get_hdr(skb);
-	cmd->gen_id++;
+	ethblk_initiator_cmd_hdr_init(cmd, hdr, skb_idx);
 
-	ethblk_initiator_cmd_hdr_init(cmd);
-	memcpy(h, &cmd->ethblk_hdr, sizeof(struct ethblk_hdr));
-
-	skb->dev = t->nd;
+	skb->dev = cmd->t->nd;
 
 	ethblk_initiator_cmd_finalize_skb_headers(cmd, skb);
 
-	skb = skb_get(skb);
+	dprintk(debug, "cmd[%d] tag %u skb_idx %d offset %d\n",
+		cmd->id, hdr->tag, skb_idx, cmd->offsets[skb_idx]);
+out:
+	return skb;
+}
 
-	if (ethblk_network_xmit_skb(skb) == NET_XMIT_DROP) {
-		NET_STAT_INC(cmd->t, cnt.tx_dropped);
+static bool
+ethblk_initiator_cmd_rw_prepare_skbs(struct ethblk_initiator_cmd *cmd,
+				     struct sk_buff_head *queue)
+{
+	bool ret = false;
+	struct sk_buff *skb;
+	int i;
+
+	for (i = 0; i < cmd->nr_skbs; i++) {
+		if (!(skb = ethblk_initiator_cmd_rw_prepare_skb(cmd, i))) {
+			dprintk_ratelimit(err, "can't alloc skb\n");
+			goto out;
+		}
+		__skb_queue_tail(queue, skb);
+	}
+	ret = true;
+out:
+	return ret;
+}
+
+static bool
+ethblk_initiator_cmd_rw_xmit_skbs(struct ethblk_initiator_cmd *cmd,
+				  struct sk_buff_head *queue)
+{
+	struct request *req = blk_mq_rq_from_pdu(cmd);
+	struct sk_buff *skb;
+	bool ret = false;
+
+	/* xmit skbs */
+	while ((skb = skb_dequeue(queue))) {
+		struct ethblk_hdr *hdr = ethblk_network_skb_get_hdr(skb);
+		int wlen = hdr->num_sectors << SECTOR_SHIFT;
+		int ret;
+
+		ret = ethblk_network_xmit_skb(skb);
+		if ((ret == NET_XMIT_DROP) || (ret == NET_XMIT_CN)) {
+			NET_STAT_INC(cmd->t, cnt.tx_dropped);
+			goto out;
+		}
+		NET_STAT_INC(cmd->t, cnt.tx_count);
+		if (rq_data_dir(req) == WRITE)
+			NET_STAT_ADD(cmd->t, cnt.tx_bytes, wlen);
+	}
+	ret = true;
+out:
+	return ret;
+}
+
+static blk_status_t
+ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd)
+	__must_hold(&cmd->lock)
+{
+	struct request *req = blk_mq_rq_from_pdu(cmd);
+	blk_status_t status;
+	struct sk_buff *skb;
+	struct sk_buff_head queue;
+	struct bio *bio;
+	int i;
+
+	if (!req->bio) {
+		status = BLK_STS_NOTSUPP;
+		goto out;
+	}
+
+	skb_queue_head_init(&queue);
+
+	cmd->t = ethblk_initiator_disk_cmd_get_next_tgt(cmd);
+
+	if (!cmd->t) {
+		DEBUG_INI_CMD(err, cmd, "no target");
+		status = BLK_STS_NEXUS;
+		goto out;
+	}
+	cmd->l3 = cmd->t->l3;
+
+	cmd->gen_id++;
+	cmd->skb_idx = 0;
+	cmd->nr_skbs = 0;
+	cmd->offset = 0;
+	bio = bio_clone_fast(req->bio, GFP_ATOMIC, &cmd->d->bio_set);
+
+	cmd->ethblk_hdr.num_sectors = blk_rq_bytes(req) / SECTOR_SIZE;
+	cmd->ethblk_hdr.lba = cpu_to_be64(blk_rq_pos(req));
+	cmd->ethblk_hdr.op = rq_data_dir(req) == WRITE ?
+			      ETHBLK_OP_WRITE : ETHBLK_OP_READ;
+
+	ethblk_initiator_cmd_hdr_init(cmd, &cmd->ethblk_hdr, 0);
+
+	/* split bio */
+	for (i = 0; cmd->offset < blk_rq_bytes(req); i++) {
+		if (cmd->bios[i])
+			bio_put(cmd->bios[i]);
+		if (!(cmd->bios[i] = ethblk_initiator_cmd_rw_split_bio(cmd, bio))) {
+			dprintk_ratelimit(err, "can't alloc bio\n");
+			status = BLK_STS_RESOURCE;
+			goto out_err;
+		}
+	}
+
+	if (!ethblk_initiator_cmd_rw_prepare_skbs(cmd, &queue)) {
 		status = BLK_STS_RESOURCE;
 		goto out_err;
 	}
-	NET_STAT_INC(cmd->t, cnt.tx_count);
-	if (rq_data_dir(req) == WRITE)
-		NET_STAT_ADD(cmd->t, cnt.tx_bytes, req_bytes);
+
+	if (!ethblk_initiator_cmd_rw_xmit_skbs(cmd, &queue)) {
+		status = BLK_STS_RESOURCE;
+		goto out_err;
+	}
 	status = BLK_STS_OK;
 	goto out;
-out_err: /* put tgt here, there won't be timeouts  */
+out_err:
+	while ((skb = skb_dequeue(&queue)))
+		consume_skb(skb);
 	ethblk_initiator_put_tgt(cmd->t);
+out:
+	return status;
+}
+
+static blk_status_t
+ethblk_initiator_cmd_rw_partial_retry(struct ethblk_initiator_cmd *cmd)
+	__must_hold(&cmd->lock)
+{
+	blk_status_t status = BLK_STS_RESOURCE;
+	struct sk_buff_head queue;
+	struct sk_buff *skb;
+	int i, ni;
+	unsigned short *old_offsets = cmd->offsets;
+	struct bio **old_bios = cmd->bios;
+	int old_offset = cmd->offset;
+	int old_skb_idx = cmd->skb_idx;
+	int old_nr_skbs = cmd->nr_skbs;
+	struct ethblk_initiator_tgt *old_t = cmd->t;
+
+	cmd->t = ethblk_initiator_disk_cmd_get_next_tgt(cmd);
+
+	if (!cmd->t) {
+		DEBUG_INI_CMD(err, cmd, "no target");
+		status = BLK_STS_NEXUS;
+		goto out_err;
+	}
+
+	cmd->offsets = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
+			       sizeof(*cmd->offsets), GFP_ATOMIC);
+	if (!cmd->offsets)
+		goto out_err;
+
+	cmd->bios = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
+			    sizeof(*cmd->bios), GFP_ATOMIC);
+	if (!cmd->bios)
+		goto out_err;
+
+	skb_queue_head_init(&queue);
+
+	cmd->l3 = cmd->t->l3;
+	cmd->gen_id++;
+	cmd->skb_idx = 0;
+	cmd->nr_skbs = 0;
+
+	/*
+	  iterate over unfinished sub-bios, split according to
+	  payload of new tgt
+	 */
+	for (i = ni = 0; i < ETHBLK_INITIATOR_CMD_MAX_SKB; i++) {
+		struct bio *bio = old_bios[i];
+
+		if (!bio)
+			continue;
+
+		dprintk(debug, "cmd[%d] found unfinished bio[%d] offset %d", cmd->id, i, old_offsets[i]);
+
+		cmd->offset = old_offsets[i];
+
+		do {
+			struct bio *split = ethblk_initiator_cmd_rw_split_bio(cmd, bio);
+
+			if (!split) {
+				dprintk_ratelimit(err, "can't alloc bio\n");
+				goto out_err;
+			}
+
+			cmd->bios[ni++] = split;
+
+			if (split == bio) /* no split */
+				break;
+		} while (ni < ETHBLK_INITIATOR_CMD_MAX_SKB);
+		old_bios[i] = NULL;
+	}
+
+	if (!ethblk_initiator_cmd_rw_prepare_skbs(cmd, &queue)) {
+		status = BLK_STS_RESOURCE;
+		goto out_err;
+	}
+
+	if (!ethblk_initiator_cmd_rw_xmit_skbs(cmd, &queue)) {
+		status = BLK_STS_RESOURCE;
+		goto out_err;
+	}
+
+	kfree(old_offsets);
+	kfree(old_bios);
+
+	if (old_t)
+		ethblk_initiator_put_tgt(old_t);
+
+	status = BLK_EH_RESET_TIMER;
+	goto out;
+
+out_err:
+	while ((skb = skb_dequeue(&queue)))
+		consume_skb(skb);
+	for (i = 0; i < ETHBLK_INITIATOR_CMD_MAX_SKB; i++) {
+		if (cmd->bios[i])
+			bio_put(cmd->bios[i]);
+	}
+	kfree(cmd->offsets);
+	kfree(cmd->bios);
+	cmd->offsets = old_offsets;
+	cmd->bios = old_bios;
+	cmd->offset = old_offset;
+	cmd->skb_idx = old_skb_idx;
+	cmd->nr_skbs = old_nr_skbs;
+	if (cmd->t)
+		ethblk_initiator_put_tgt(cmd->t);
+	cmd->t = old_t;
 out:
 	return status;
 }
@@ -1255,7 +1492,6 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(bd->rq);
 	blk_status_t status = BLK_STS_NOTSUPP;
 	unsigned long current_time;
-	struct ethblk_initiator_disk_context *ctx = &cmd->d->ctx[cmd->hctx_idx];
 
 	if (!cmd->d->online) {
 		status = BLK_STS_NEXUS;
@@ -1282,10 +1518,8 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 
 	blk_mq_start_request(bd->rq);
 
-	atomic_inc(&ctx->in_flight);
-
 	if (!blk_rq_is_passthrough(bd->rq)) {
-		status = ethblk_initiator_cmd_rw(cmd, bd->last);
+		status = ethblk_initiator_cmd_rw(cmd);
 	} else {
 		status = ethblk_initiator_cmd_id(cmd);
 	}
@@ -1315,16 +1549,20 @@ static int ethblk_initiator_blk_init_request(struct blk_mq_tag_set *set,
 	cmd->gen_id = 0;
 	cmd->time_queued = cmd->time_completed = 0;
 	spin_lock_init(&cmd->lock);
-	cmd->skb = ethblk_network_new_skb(ETH_ZLEN);
-	if (!cmd->skb) {
-		dprintk(err, "cmd[%d] hctx %d can't preallocate skb\n", cmd->id,
-			hctx_idx);
-		return -ENOMEM;
-	}
 	cmd->d->cmd[cmd->id] = cmd;
 	if (cmd->d->max_cmd < cmd->id)
 		cmd->d->max_cmd = cmd->id;
-
+	cmd->offsets = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
+			       sizeof(*cmd->offsets), GFP_KERNEL);
+	if (!cmd->offsets)
+		return -ENOMEM;
+	cmd->bios = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
+			    sizeof(*cmd->bios), GFP_KERNEL);
+	if (!cmd->bios) {
+		kfree(cmd->offsets);
+		cmd->offsets = NULL;
+		return -ENOMEM;
+	}
 	return 0;
 }
 
@@ -1333,17 +1571,14 @@ static void ethblk_initiator_blk_exit_request(struct blk_mq_tag_set *set,
 					      unsigned int hctx_idx)
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
-	struct sk_buff *skb;
+	int i;
 
-	spin_lock_bh(&cmd->lock);
-	skb = cmd->skb;
-
-	skb->truesize -= skb->data_len;
-	skb_shinfo(skb)->nr_frags = skb->data_len = 0;
-	skb_trim(skb, 0);
-
-	consume_skb(skb);
-	spin_unlock_bh(&cmd->lock);
+	for (i = 0; i < ETHBLK_INITIATOR_CMD_MAX_SKB; i++) {
+		if (cmd->bios[i])
+			bio_put(cmd->bios[i]);
+	}
+	kfree(cmd->offsets);
+	kfree(cmd->bios);
 }
 
 static void ethblk_initiator_blk_complete_request_locked(struct request *req)
@@ -1387,9 +1622,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 	enum blk_eh_timer_return status = BLK_EH_DONE;
 	unsigned long current_time = ktime_get_ns();
 
-	if (!spin_trylock(&cmd->lock)) {
-		return BLK_EH_RESET_TIMER;
-	}
+	spin_lock_bh(&cmd->lock);
 
 	/* was just completed? */
 	if (cmd->time_completed != 0 && cmd->time_queued == 0) {
@@ -1416,14 +1649,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 			tctx = &cmd->t->ctx[cmd->hctx_idx];
 			tctx->taint = min(tctx->taint + 1, 1000);
 		}
-		/* Possible transport layer change, reconstruct skb */
-		if (cmd->t) {
-			ethblk_initiator_put_tgt(cmd->t);
-			cmd->t = NULL;
-		}
-		ethblk_initiator_cmd_rw(cmd, true);
-
-		status = BLK_EH_RESET_TIMER;
+		status = ethblk_initiator_cmd_rw_partial_retry(cmd);
 		goto out_unlock;
 	}
 
@@ -1433,7 +1659,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 	cmd->status = BLK_STS_TIMEOUT;
 	ethblk_initiator_blk_complete_request_locked(req);
 out_unlock:
-	spin_unlock(&cmd->lock);
+	spin_unlock_bh(&cmd->lock);
 	return status;
 }
 
@@ -1446,46 +1672,9 @@ static struct blk_mq_ops ethblk_ops = {
 	.timeout = ethblk_initiator_blk_request_timeout
 };
 
-static void
-ethblk_initiator_disk_set_max_payload(struct ethblk_initiator_disk *d,
-				      int _max_payload,
-				      int max_possible_payload)
+static int ethblk_initiator_calc_max_payload(int mtu)
 {
-	struct request_queue *q = d->queue;
-	int max_payload = 1U << (fls(_max_payload) - 1);
-
-	dprintk(info,
-		"disk %s set max payload %d (aligned %d) "
-		"max_possible_payload %d\n",
-		d->name, _max_payload, max_payload, max_possible_payload);
-
-	if (d->max_possible_payload < max_payload) {
-		dprintk(info,
-			"disk %s max possible payload %d < "
-			"new max_payload %d, not changing\n",
-			d->name, d->max_possible_payload, max_payload);
-		return;
-	}
-	if (d->max_possible_payload > max_possible_payload) {
-		dprintk(info,
-			"disk %s new max possible payload %d < old %d, "
-			"reducing\n",
-			d->name, max_possible_payload, d->max_possible_payload);
-		d->max_possible_payload = max_possible_payload;
-	}
-
-	dprintk(info, "disk %s changing max payload from %d to %d\n", d->name,
-		d->max_payload, max_payload);
-	d->max_payload = max_payload;
-	blk_mq_freeze_queue(q);
-	blk_mq_quiesce_queue(q);
-	q->limits.max_dev_sectors = max_payload / SECTOR_SIZE;
-	blk_queue_io_opt(q, max_payload);
-	blk_queue_max_hw_sectors(q, max_payload / SECTOR_SIZE);
-	blk_queue_max_segments(q, max_payload / SECTOR_SIZE);
-	blk_queue_max_segment_size(q, max_payload);
-	blk_mq_unquiesce_queue(q);
-	blk_mq_unfreeze_queue(q);
+	return ALIGN_DOWN(mtu - ETHBLK_HDR_L3_SIZE, SECTOR_SIZE);
 }
 
 static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
@@ -1536,7 +1725,6 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	for (i = 0; i <= num_hw_queues; i++) {
 		d->ctx[i].hctx_id = i;
 		d->ctx[i].current_target_idx = 0;
-		atomic_set(&d->ctx[i].in_flight, 0);
 	}
 
 	if (ethblk_initiator_disk_stat_init(d) != 0) {
@@ -1559,7 +1747,7 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	/* FIXME have a way for user to specify */
 	d->tag_set.numa_node = NUMA_NO_NODE;
 	d->tag_set.cmd_size = sizeof(struct ethblk_initiator_cmd);
-	/*	d->tag_set.flags = BLK_MQ_F_SHOULD_MERGE | BLK_MQ_F_SG_MERGE; */
+//	d->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 	d->tag_set.driver_data = d;
 	d->tag_set.timeout = CMD_RETRY_JIFFIES;
 
@@ -1575,6 +1763,10 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 		goto err_tag_set;
 	}
 
+	err = bioset_init(&d->bio_set, BIO_POOL_SIZE, 0, 0);
+	if (err)
+		goto err_bio_set;
+
 	blk_queue_logical_block_size(q, SECTOR_SIZE);
 	blk_queue_physical_block_size(q, SECTOR_SIZE);
 	blk_queue_io_min(q, SECTOR_SIZE);
@@ -1588,10 +1780,13 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	q->nr_requests = d->tag_set.queue_depth;
 	d->queue = gd->queue = q;
 
-	d->max_possible_payload = INT_MAX;
-	ethblk_initiator_disk_set_max_payload(d,
-		(ETH_DATA_LEN - sizeof(struct ethblk_hdr)) / SECTOR_SIZE,
-		INT_MAX);
+	q->limits.max_dev_sectors = ETHBLK_INITIATOR_MAX_PAYLOAD / SECTOR_SIZE;
+	blk_queue_io_opt(q, PAGE_SIZE);
+	blk_queue_max_hw_sectors(q, ETHBLK_INITIATOR_MAX_PAYLOAD / SECTOR_SIZE);
+	blk_queue_max_segments(q, ETHBLK_INITIATOR_MAX_PAYLOAD / SECTOR_SIZE);
+	blk_queue_max_segment_size(q, ETHBLK_INITIATOR_MAX_PAYLOAD);
+
+	blk_queue_rq_timeout(q, CMD_RETRY_JIFFIES);
 
 	gd->major = disk_major;
 	gd->first_minor = first_minor;
@@ -1603,6 +1798,7 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	add_disk(gd);
 	return 0;
 
+err_bio_set:
 err_tag_set:
 	blk_mq_free_tag_set(&d->tag_set);
 err_gd:
@@ -1886,7 +2082,7 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 	rcu_read_unlock();
 	spin_unlock_irqrestore(&d->target_lock, flags);
 
-	ethblk_initiator_disk_set_max_payload(d, nd->mtu, nd->max_mtu);
+	tn->max_payload = ethblk_initiator_calc_max_payload(nd->mtu);
 
 	return tn;
 out_sysfs:
@@ -2091,7 +2287,8 @@ ethblk_initiator_cmd_id_complete(struct ethblk_initiator_cmd *cmd,
 }
 
 static int ethblk_skb_copy_to_cmd(struct sk_buff *skb,
-				  struct ethblk_initiator_cmd *cmd)
+				  struct ethblk_initiator_cmd *cmd,
+				  int req_offset)
 {
 	struct bio_vec bv;
 	struct req_iterator iter;
@@ -2101,13 +2298,9 @@ static int ethblk_skb_copy_to_cmd(struct sk_buff *skb,
 
 	rq_for_each_segment (bv, req, iter) {
 		to = page_address(bv.bv_page) + bv.bv_offset;
-		/*
-		  FIXME this is the only non-zerocopy bit in IO path.
-		  Needs DMA steering at NIC level...
-		*/
-#ifndef ETHBLK_INITIATOR_FAKE_ZEROCOPY
-		skb_copy_bits(skb, off, to, bv.bv_len);
-#endif
+		if (off >= req_offset) {
+			skb_copy_bits(skb, off, to, bv.bv_len);
+		}
 		off += bv.bv_len;
 	}
 	return off;
@@ -2128,12 +2321,14 @@ static void ethblk_initiator_checksum_cmd_complete(struct ethblk_initiator_cmd *
 	DEBUG_INI_CMD(debug, cmd, "checksum %s", s);
 }
 
-static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
+static bool ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 					  struct sk_buff *skb)
 {
 	struct ethblk_hdr *rep_hdr, *req_hdr;
-	int n;
-	struct ethblk_initiator_disk_context *ctx = &cmd->d->ctx[cmd->hctx_idx];
+	int n, skb_idx, offset;
+	bool done = true;
+	u32 tag;
+	struct bio * bio;
 
 	req_hdr = &cmd->ethblk_hdr;
 
@@ -2150,16 +2345,24 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 	}
 
 	n = req_hdr->num_sectors << SECTOR_SHIFT;
+
+	tag = be32_to_cpu(rep_hdr->tag);
+	skb_idx = (tag >> 24) & 63;
+	if (skb_idx && (skb_idx >= cmd->skb_idx)) {
+		dprintk_ratelimit(err,
+				  "%s: tag skb_idx %d >= cmd->skb_idx %d\n",
+				  cmd->d->name, skb_idx, cmd->skb_idx);
+		cmd->status = BLK_STS_IOERR;
+		goto out;
+	}
+	offset = cmd->offsets[skb_idx];
+	bio = cmd->bios[skb_idx];
+
 	switch (req_hdr->op) {
 	case ETHBLK_OP_READ:
-		if (skb->len < n) {
-			dprintk_ratelimit(err,
-				"%s: runt read data size %d (need %d)\n",
-				cmd->d->name, skb->len, n);
-			cmd->status = BLK_STS_IOERR;
-			break;
-		}
-
+		cmd->nr_skbs--;
+		if (cmd->nr_skbs)
+			done = false;
 		if (n > blk_rq_bytes(blk_mq_rq_from_pdu(cmd))) {
 			dprintk_ratelimit(err,
 				"%s: too large read data size %d"
@@ -2169,10 +2372,23 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 			cmd->status = BLK_STS_IOERR;
 			break;
 		}
-		ethblk_skb_copy_to_cmd(skb, cmd);
+		DEBUG_INI_CMD(debug, cmd, "skb_idx %d, offset %d, nr_skbs left %d", skb_idx, offset, cmd->nr_skbs);
+		ethblk_skb_copy_to_cmd(skb, cmd, offset);
+		if (bio) {
+			bio_put(bio);
+			cmd->bios[skb_idx] = NULL;
+		}
 		cmd->status = BLK_STS_OK;
 		break;
 	case ETHBLK_OP_WRITE:
+		cmd->nr_skbs--;
+		if (cmd->nr_skbs)
+			done = false;
+		DEBUG_INI_CMD(debug, cmd, "skb_idx %d, offset %d, nr_skbs left %d", skb_idx, offset, cmd->nr_skbs);
+		if (bio) {
+			bio_put(bio);
+			cmd->bios[skb_idx] = NULL;
+		}
 		cmd->status = BLK_STS_OK;
 		break;
 	case ETHBLK_OP_ID:
@@ -2193,8 +2409,7 @@ static void ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 	}
 
 out:
-	atomic_dec(&ctx->in_flight);
-	return;
+	return done;
 }
 
 void ethblk_initiator_cmd_response(struct sk_buff *skb, unsigned comp_cpu)
@@ -2268,8 +2483,10 @@ void ethblk_initiator_cmd_response(struct sk_buff *skb, unsigned comp_cpu)
 	DEBUG_INI_CMD(debug, cmd, "found cmd %px L%d for tag %d", cmd,
 		      cmd->l3 ? 3 : 2, tag);
 	cmd->cpu_completed = comp_cpu;
-	ethblk_initiator_cmd_complete(cmd, skb);
-	ethblk_initiator_blk_complete_request_locked(blk_mq_rq_from_pdu(cmd));
+	if (ethblk_initiator_cmd_complete(cmd, skb)) {
+		dprintk(debug, "cmd[%d] complete request\n", cmd->id);
+		ethblk_initiator_blk_complete_request_locked(blk_mq_rq_from_pdu(cmd));
+	}
 out_unlock:
 	spin_unlock_bh(&cmd->lock);
 out:
@@ -2564,8 +2781,8 @@ static void ethblk_initiator_netdevice_change_mtu(struct net_device *nd)
 			for (i = 0; i < ta->nr; i++) {
 				t = ta->tgts[i];
 				if (nd == t->nd) {
-					ethblk_initiator_disk_set_max_payload(
-						d, nd->mtu, nd->max_mtu);
+					t->max_payload = ethblk_initiator_calc_max_payload(nd->mtu);
+					dprintk(info, "t %px new max_payload %d\n", t, t->max_payload);
 				}
 			}
 		}
