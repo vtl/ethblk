@@ -1105,6 +1105,7 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 {
 	struct bio *bio = cmd->bio;
 	struct ethblk_hdr *rep_hdr = ethblk_network_skb_get_hdr(cmd->rep_skb);
+	int ret;
 
 	if (bio) {
 		if (bio->bi_status == BLK_STS_AGAIN ||
@@ -1139,19 +1140,21 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd)
 
 	/* xmit_skb will consume skb, but we need it for the following NET_STAT */
 	skb_get(cmd->rep_skb);
-	if (ethblk_network_xmit_skb(cmd->rep_skb) == NET_XMIT_DROP) {
+	ret = ethblk_network_xmit_skb(cmd->rep_skb);
+	if ((ret == NET_XMIT_DROP) || (ret == NET_XMIT_CN)) {
 		NET_STAT_INC(cmd->ini, cnt.tx_dropped);
 	} else {
 		NET_STAT_INC(cmd->ini, cnt.tx_count);
 		NET_STAT_ADD(cmd->ini, cnt.tx_bytes,
 			     (rep_hdr->op == ETHBLK_OP_READ ?
-			      rep_hdr->num_sectors << 9 :
+			      rep_hdr->num_sectors << SECTOR_SHIFT :
 			      0));
 	}
 	consume_skb(cmd->rep_skb);
 	cmd->rep_skb = NULL;
 out:
 	ethblk_target_cmd_free(cmd);
+	return;
 }
 
 static void ethblk_target_cmd_rw_complete(struct bio *bio)
@@ -1456,15 +1459,12 @@ void ethblk_target_cmd_deferred(struct sk_buff *skb)
 {
 	struct ethblk_target_cmd *cmd;
 
-	if (!target_running) {
-		consume_skb(skb);
-		return;
-	}
+	if (!target_running)
+		goto err;
 	cmd = kmem_cache_zalloc(ethblk_target_cmd_cache, GFP_ATOMIC);
 	if (!cmd) {
 		dprintk_ratelimit(debug, "can't allocate cmd\n");
-		consume_skb(skb);
-		return;
+		goto err;
 	}
 	dprintk(debug, "alloc cmd %px\n", cmd);
 	INIT_LIST_HEAD(&cmd->list);
@@ -1475,11 +1475,12 @@ void ethblk_target_cmd_deferred(struct sk_buff *skb)
 
 	if (!ethblk_worker_enqueue(workers, &cmd->list)) {
 		dprintk_ratelimit(debug, "can't enqueue work\n");
-		goto err;
+		goto err_free_cmd;
 	}
 	goto out;
-err:
+err_free_cmd:
 	kmem_cache_free(ethblk_target_cmd_cache, cmd);
+err:
 	consume_skb(skb);
 out:
 	return;
@@ -1493,20 +1494,26 @@ static void ethblk_target_cmd_worker(struct kthread_work *work)
 	struct ethblk_target_cmd *cmd, *n;
 	bool queue_empty;
 	struct blk_plug plug;
-	unsigned long flags;
 
 	dprintk(debug, "worker[%d] on\n", w->idx);
 	for (;;) {
 		INIT_LIST_HEAD(&queue);
-		spin_lock_irqsave(&w->lock, flags);
+		spin_lock_bh(&w->lock);
 		list_splice_tail_init(&w->queue, &queue);
 		queue_empty = list_empty(&queue);
 		if (queue_empty)
 			w->active = false;
-		spin_unlock_irqrestore(&w->lock, flags);
+		spin_unlock_bh(&w->lock);
 
 		if (queue_empty)
 			break;
+
+		list_for_each_entry_safe(cmd, n, &queue, list) {
+			if (cmd->work_type == ETHBLK_TARGET_CMD_WORK_TYPE_BIO) {
+				list_del(&cmd->list);
+				ethblk_target_send_reply(cmd);
+			}
+		}
 
 		blk_start_plug(&plug);
 		list_for_each_entry_safe (cmd, n, &queue, list) {

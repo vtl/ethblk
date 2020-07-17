@@ -20,12 +20,6 @@
 #include <linux/udp.h>
 #include <net/ip.h>
 
-/* Defragment skb. Uncomment if kernel panics in ethblk_network_recv */
-#define ETHBLK_NETWORK_LINEARIZE_SKB
-
-/* Uncomment for IOPS estimation on a fully zero-copy IO path */
-//#define ETHBLK_INITIATOR_FAKE_ZEROCOPY
-
 #define VERSION "0.1"
 
 extern int net_stat;
@@ -113,11 +107,17 @@ struct ethblk_cfg_hdr {
 	__u8 uuid[UUID_SIZE];
 } __attribute__((packed));
 
+#define ETHBLK_HDR_SIZE \
+	(sizeof(struct ethblk_hdr))
+
 #define ETHBLK_CFG_REPLY_SIZE \
 	(sizeof(struct ethblk_hdr) + sizeof(struct ethblk_cfg_hdr))
 
 #define ETHBLK_HDR_L3_SIZE \
 	(sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr))
+
+#define ETHBLK_HDR_SIZE_FROM_CMD(cmd) \
+	(ETHBLK_HDR_SIZE + (cmd->l3 ? ETHBLK_HDR_L3_SIZE : 0))
 
 void ethblk_net_init(void);
 void ethblk_net_exit(void);
