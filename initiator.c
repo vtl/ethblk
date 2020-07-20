@@ -18,8 +18,6 @@
 #include "network.h"
 #include "worker.h"
 
-#define FIX_Q_USAGE_COUNTER
-
 static bool initiator_running = false;
 static struct ethblk_worker_pool *workers;
 
@@ -819,7 +817,6 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 	dprintk(info, "freeing disk %s %px\n", d->name, d);
 
 	ethblk_initiator_disk_remove_all_targets(d);
-//	xa_lock(ethblk_initiator_disks);
 	sysfs_remove_group(&d->kobj, &ethblk_initiator_disk_group);
 	kobject_del(&d->kobj);
 	blk_mq_stop_hw_queues(d->queue);
@@ -829,47 +826,12 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 	blk_cleanup_queue(d->queue);
 	blk_mq_free_tag_set(&d->tag_set);
 	bioset_exit(&d->bio_set);
-
-#ifdef FIX_Q_USAGE_COUNTER
-	/*
-	  Deal with blk-mq IO complete/timeout race...
-	   Switch q->usage_counter to atomic, fix it, switch back to percpu
-	*/
-	{
-		unsigned long __percpu *percpu_count =
-			(unsigned long __percpu *)(d->queue->q_usage_counter
-							   .percpu_count_ptr &
-						   ~__PERCPU_REF_ATOMIC_DEAD);
-		unsigned long count = 0;
-		int cpu;
-
-		for_each_possible_cpu (cpu)
-			count += *per_cpu_ptr(percpu_count, cpu);
-
-		if (count != 0) {
-			dprintk(err,
-				"disk %s fixing q_usage_counter "
-				"(percpu %ld, atomic %ld)\n",
-				d->name,
-				atomic_long_read(
-					&d->queue->q_usage_counter.count),
-				(long)count);
-
-			percpu_ref_switch_to_atomic_sync(
-				&d->queue->q_usage_counter);
-			atomic_long_set(&d->queue->q_usage_counter.count, 0);
-			percpu_ref_switch_to_percpu(&d->queue->q_usage_counter);
-		}
-	}
-#endif
 	put_disk(d->gd);
 	xa_erase(&ethblk_initiator_disks, d->drv_id);
 	sysfs_remove_group(&d->tgts_kobj, &ethblk_initiator_disk_tgts_group);
 	kobject_del(&d->tgts_kobj);
 	kfree(d->cmd);
 	kfree(d->ctx);
-//	xa_unlock(ethblk_initiator_disks);
-
 	ethblk_initiator_disk_stat_free(d);
 	complete(&d->destroy_completion);
 	kfree_rcu(d, rcu);
