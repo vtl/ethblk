@@ -1783,7 +1783,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 	dprintk(debug, "drv_id %d create %d\n", drv_id, create);
 	d = xa_load(&ethblk_initiator_disks, drv_id);
 	if (d) {
-// FIXME need it		ethblk_initiator_get_disk(d);
+		ethblk_initiator_get_disk(d);
 		dprintk(debug, "found disk %px %s\n", d, d->name);
 		goto out;
 	}
@@ -1798,6 +1798,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 		goto out_err;
 	}
 	kref_init(&d->ref);
+	ethblk_initiator_get_disk(d);
 	d->drv_id = drv_id;
 	snprintf(d->name, sizeof(d->name), "eda%d", d->drv_id);
 	d->net_stat_enabled = net_stat;
@@ -1929,6 +1930,8 @@ ethblk_initiator_disk_find_target_by_skb(struct sk_buff *skb)
 
 	t = ethblk_initiator_disk_find_target(d, p, skb->dev, l3);
 out:
+	if (d)
+		ethblk_initiator_put_disk(d);
 	return t;
 }
 
@@ -2189,25 +2192,23 @@ void ethblk_initiator_discover_response(struct sk_buff *skb)
 			drv_id, skb->dev->name, p);
 
 	d = ethblk_initiator_find_disk(drv_id, true);
-	if (d == NULL) {
+	if (!d) {
 		dprintk(err, "can't allocate new device eda%d\n", drv_id);
-		goto out_skb;
+		goto out;
 	}
-
-	ethblk_initiator_get_disk(d);
 
 	t = ethblk_initiator_disk_find_target(d, p, skb->dev, l3);
 	if (!t) {
 		t = ethblk_initiator_disk_add_target(d, p, skb->dev, l3);
 		if (!t)
-			goto bail;
+			goto out;
 	}
 
 	ethblk_initiator_tgt_send_id(t);
-bail:
-	ethblk_initiator_put_disk(d);
-out_skb:
+out:
 	consume_skb(skb);
+	if (d)
+		ethblk_initiator_put_disk(d);
 }
 
 static void
@@ -2454,6 +2455,8 @@ out_unlock:
 out:
 	if (t)
 		ethblk_initiator_put_tgt(t);
+	if (d)
+		ethblk_initiator_put_disk(d);
 	consume_skb(skb);
 }
 
@@ -2668,6 +2671,8 @@ static ssize_t create_disk_store(struct kobject *kobj,
 			count = -EINVAL;
 		}
 	}
+	if (d)
+		ethblk_initiator_put_disk(d);
 	return count;
 }
 
