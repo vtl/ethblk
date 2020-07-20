@@ -60,7 +60,28 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 				 bool l3);
 static int ethblk_initiator_disk_remove_target(struct ethblk_initiator_tgt *t);
 static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t);
+static void ethblk_initiator_tgt_free(struct percpu_ref *ref);
 static void ethblk_initiator_tgt_free_deferred(struct work_struct *w);
+
+static inline void ethblk_initiator_get_tgt(struct ethblk_initiator_tgt *t)
+{
+	percpu_ref_get(&t->ref);
+}
+
+static inline void ethblk_initiator_put_tgt(struct ethblk_initiator_tgt *t)
+{
+	percpu_ref_put(&t->ref);
+}
+
+static inline void ethblk_initiator_get_disk(struct ethblk_initiator_disk *d)
+{
+	percpu_ref_get(&d->ref);
+}
+
+static inline void ethblk_initiator_put_disk(struct ethblk_initiator_disk *d)
+{
+	percpu_ref_put(&d->ref);
+}
 
 #define NET_STAT_ADD(t, var, val)                                              \
 	do {                                                                   \
@@ -586,7 +607,13 @@ ethblk_initiator_disk_disconnect_store(struct kobject *kobj,
 
 	dprintk(info, "disconnecting disk %s %px\n", d->name, d);
 	ethblk_initiator_disk_remove_all_targets(d);
+
+	/* this sysfs file needs to be closed for the complete disk removal */
+	ethblk_initiator_get_disk(d);
+	percpu_ref_kill(&d->ref);
+	synchronize_rcu();
 	ethblk_initiator_put_disk_delayed(d);
+
 	return count;
 }
 
@@ -769,29 +796,6 @@ static struct kobj_type ethblk_initiator_disk_tgt_kobj_type = {
 	.sysfs_ops = &kobj_sysfs_ops,
 };
 
-static void ethblk_initiator_tgt_free(struct percpu_ref *ref);
-static void ethblk_initiator_disk_free(struct kref *ref);
-
-static inline void ethblk_initiator_get_tgt(struct ethblk_initiator_tgt *t)
-{
-	percpu_ref_get(&t->ref);
-}
-
-static inline void ethblk_initiator_put_tgt(struct ethblk_initiator_tgt *t)
-{
-	percpu_ref_put(&t->ref);
-}
-
-static inline void ethblk_initiator_get_disk(struct ethblk_initiator_disk *d)
-{
-	kref_get(&d->ref);
-}
-
-static inline void ethblk_initiator_put_disk(struct ethblk_initiator_disk *d)
-{
-	kref_put(&d->ref, ethblk_initiator_disk_free);
-}
-
 static void ethblk_initiator_disk_set_capacity_work(struct work_struct *w)
 {
 	struct ethblk_initiator_disk *d =
@@ -809,7 +813,7 @@ static void ethblk_initiator_disk_set_capacity_work(struct work_struct *w)
 	}
 }
 
-static void ethblk_initiator_disk_free(struct kref *ref)
+static void ethblk_initiator_disk_free(struct percpu_ref *ref)
 {
 	struct ethblk_initiator_disk *d =
 		container_of(ref, struct ethblk_initiator_disk, ref);
@@ -833,6 +837,7 @@ static void ethblk_initiator_disk_free(struct kref *ref)
 	kfree(d->cmd);
 	kfree(d->ctx);
 	ethblk_initiator_disk_stat_free(d);
+	percpu_ref_exit(&d->ref);
 	complete(&d->destroy_completion);
 	kfree_rcu(d, rcu);
 	dprintk(info, "disk %px eda%d freed\n", d, d->drv_id);
@@ -904,6 +909,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
+		/* FIXME make tunable per-disk */
 		int port = (cmd->hctx_idx + (cmd->skb_idx % 4)) % cmd->t->num_queues;
 
 		skb_put(skb, ETHBLK_HDR_L3_SIZE);
@@ -1797,8 +1803,13 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 		dprintk(err, "can't alloc new disk");
 		goto out_err;
 	}
-	kref_init(&d->ref);
-	ethblk_initiator_get_disk(d);
+	ret = percpu_ref_init(&d->ref, ethblk_initiator_disk_free, 0,
+			      GFP_KERNEL);
+	if (ret) {
+		dprintk(err, "can't init d->ref\n");
+		goto out_err;
+	}
+
 	d->drv_id = drv_id;
 	snprintf(d->name, sizeof(d->name), "eda%d", d->drv_id);
 	d->net_stat_enabled = net_stat;
@@ -1821,6 +1832,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 	}
 // FIXME check needed?
 	xa_store(&ethblk_initiator_disks, d->drv_id, d, GFP_ATOMIC);
+	ethblk_initiator_get_disk(d);
 
 	ret = sysfs_create_group(&d->kobj, &ethblk_initiator_disk_group);
 	if (ret) {
@@ -1867,7 +1879,13 @@ static void ethblk_initiator_destroy_all_disks(void)
 	xa_for_each(&ethblk_initiator_disks, drv_id, d) {
 		dprintk(info, "destroying %s %px\n", d->name, d);
 		ethblk_initiator_disk_remove_all_targets(d);
-		ethblk_initiator_put_disk_delayed(d);
+
+		/* last ref needs to be dropped in a process ctx */
+		ethblk_initiator_get_disk(d);
+		percpu_ref_kill(&d->ref);
+		synchronize_rcu();
+		ethblk_initiator_put_disk(d);
+
 		wait_for_completion(&d->destroy_completion);
 	}
 }
