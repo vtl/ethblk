@@ -108,7 +108,7 @@ struct ethblk_initiator_disk {
 	spinlock_t target_lock;
 	int seq_id;
 	struct work_struct cap_work;
-	struct kref ref;
+	struct percpu_ref ref;
 	struct completion destroy_completion;
 	int max_cmd;
 	struct ethblk_initiator_cmd **cmd;
@@ -145,6 +145,7 @@ struct ethblk_initiator_cmd {
 	int nr_skbs;
 	unsigned short *offsets;
 	struct bio **bios;
+	struct sk_buff **skbs;
 } __attribute__((aligned(64)));
 
 void ethblk_initiator_discover_response(struct sk_buff *);

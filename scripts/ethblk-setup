@@ -38,8 +38,8 @@ systemctl stop tuned
 #mlnx_tune -p HIGH_THROUGHPUT
 
 rmmod ethblk
-#insmod ethblk.ko initiator=$ini target=$tgt disk_major=154 queue_depth=256 rps=1 ip_ports=256 lat_stat=0
-insmod ethblk.ko initiator=$ini target=$tgt disk_major=154 rps=1
+insmod ethblk.ko initiator=$ini target=$tgt disk_major=154 queue_depth=256 rps=0 ip_ports=256 lat_stat=0
+#insmod ethblk.ko initiator=$ini target=$tgt disk_major=154 rps=1
 # uncomment for debug
 #echo module ethblk +p > /sys/kernel/debug/dynamic_debug/control
 
