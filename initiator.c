@@ -1162,9 +1162,19 @@ ethblk_initiator_cmd_rw_prepare_skb(struct ethblk_initiator_cmd *cmd,
 	if (!bio)
 		goto out;
 
-	skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
-	if (!skb)
-		goto out;
+	skb = cmd->skbs[skb_idx];
+	if (skb) {
+		skb->truesize -= skb->data_len;
+		skb_shinfo(skb)->nr_frags = skb->data_len = 0;
+		skb_trim(skb, 0);
+	} else {
+		skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
+		if (!skb)
+			goto out;
+		cmd->skbs[skb_idx] = skb;
+	}
+
+	skb_get(skb);
 
 	eth = (struct ethhdr *)skb_mac_header(skb);
 	ip = (struct iphdr *)(eth + 1);
@@ -1304,7 +1314,12 @@ ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd)
 	cmd->skb_idx = 0;
 	cmd->nr_skbs = 0;
 	cmd->offset = 0;
-	bio = bio_clone_fast(req->bio, GFP_ATOMIC, &cmd->d->bio_set);
+	if (blk_rq_bytes(req) > cmd->t->max_payload) {
+		bio = bio_clone_fast(req->bio, GFP_ATOMIC, &cmd->d->bio_set);
+	} else {
+		bio = req->bio;
+		bio_get(bio);
+	}
 
 	cmd->ethblk_hdr.num_sectors = blk_rq_bytes(req) / SECTOR_SIZE;
 	cmd->ethblk_hdr.lba = cpu_to_be64(blk_rq_pos(req));
@@ -1502,6 +1517,7 @@ static int ethblk_initiator_blk_init_request(struct blk_mq_tag_set *set,
 					     unsigned int hctx_idx,
 					     unsigned int numa_node)
 {
+	int ret = -ENOMEM;
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
 	int id_size = 1UL << (8 * (sizeof_field(struct ethblk_hdr, tag) / 2));
 
@@ -1511,7 +1527,7 @@ static int ethblk_initiator_blk_init_request(struct blk_mq_tag_set *set,
 	if (cmd->id >= id_size) {
 		dprintk(err, "cmd[%d] hctx %d would not fit in ETHBLK TAG\n",
 			cmd->id, hctx_idx);
-		return -ENOMEM;
+		goto out;
 	}
 	cmd->retries = 0;
 	cmd->gen_id = 0;
@@ -1523,15 +1539,28 @@ static int ethblk_initiator_blk_init_request(struct blk_mq_tag_set *set,
 	cmd->offsets = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
 			       sizeof(*cmd->offsets), GFP_KERNEL);
 	if (!cmd->offsets)
-		return -ENOMEM;
+		goto out;
+
 	cmd->bios = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
 			    sizeof(*cmd->bios), GFP_KERNEL);
-	if (!cmd->bios) {
-		kfree(cmd->offsets);
-		cmd->offsets = NULL;
-		return -ENOMEM;
-	}
-	return 0;
+	if (!cmd->bios)
+		goto offsets;
+
+	cmd->skbs = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB, sizeof(*cmd->skbs),
+			    GFP_KERNEL);
+	if (!cmd->skbs)
+		goto bios;
+
+	ret = 0;
+	goto out;
+bios:
+	kfree(cmd->bios);
+	cmd->bios = NULL;
+offsets:
+	kfree(cmd->offsets);
+	cmd->offsets = NULL;
+out:
+	return ret;
 }
 
 static void ethblk_initiator_blk_exit_request(struct blk_mq_tag_set *set,
@@ -1544,9 +1573,12 @@ static void ethblk_initiator_blk_exit_request(struct blk_mq_tag_set *set,
 	for (i = 0; i < ETHBLK_INITIATOR_CMD_MAX_SKB; i++) {
 		if (cmd->bios[i])
 			bio_put(cmd->bios[i]);
+		if (cmd->skbs[i])
+			consume_skb(cmd->skbs[i]);
 	}
 	kfree(cmd->offsets);
 	kfree(cmd->bios);
+	kfree(cmd->skbs);
 }
 
 static void ethblk_initiator_blk_complete_request_locked(struct request *req)

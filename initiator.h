@@ -145,6 +145,7 @@ struct ethblk_initiator_cmd {
 	int nr_skbs;
 	unsigned short *offsets;
 	struct bio **bios;
+	struct sk_buff **skbs;
 } __attribute__((aligned(64)));
 
 void ethblk_initiator_discover_response(struct sk_buff *);
