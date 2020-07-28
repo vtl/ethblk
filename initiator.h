@@ -54,6 +54,7 @@ struct ethblk_initiator_disk_tgt_context {
 	int hctx_id;
 	int taint;
 	int relax_timeout;
+	unsigned int port;
 } __attribute__((aligned(64)));
 
 struct ethblk_initiator_tgt {

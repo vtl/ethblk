@@ -909,8 +909,15 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
+		struct request *req = blk_mq_rq_from_pdu(cmd);
+		struct ethblk_initiator_disk_tgt_context *tctx = &cmd->t->ctx[cmd->hctx_idx];
+		int port;
+
 		/* FIXME make tunable per-disk */
-		int port = (cmd->hctx_idx + (cmd->skb_idx % 4)) % cmd->t->num_queues;
+		if (blk_rq_bytes(req) > cmd->t->max_payload)
+			port = (tctx->port++ >> 3) % cmd->t->num_queues;
+		else
+			port = smp_processor_id() % cmd->t->num_queues;
 
 		skb_put(skb, ETHBLK_HDR_L3_SIZE);
 		skb->protocol = htons(ETH_P_IP);
