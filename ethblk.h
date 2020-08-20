@@ -18,7 +18,15 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/udp.h>
+#include <linux/version.h>
 #include <net/ip.h>
+
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 7, 0)
+#define SHA_DIGEST_WORDS    SHA1_DIGEST_WORDS
+#define SHA_WORKSPACE_WORDS SHA1_WORKSPACE_WORDS
+#define sha_init            sha1_init
+#define sha_transform       sha1_transform
+#endif
 
 #define VERSION "0.1"
 
