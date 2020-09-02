@@ -965,7 +965,7 @@ ethblk_initiator_cmd_finalize_skb_headers(struct ethblk_initiator_cmd *cmd,
 			ether_addr_copy(eth->h_dest, h->dst);
 		}
 
-		tot_len = skb->len - sizeof(struct ethhdr) + skb->data_len;
+		tot_len = skb->len - sizeof(struct ethhdr);
 		ip->tot_len = htons(tot_len);
 		udp->len = htons(tot_len - sizeof(struct iphdr));
 		udp->check = 0;
