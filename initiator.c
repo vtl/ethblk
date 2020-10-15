@@ -157,7 +157,7 @@ ethblk_initiator_cmd_dump_to_string(struct ethblk_initiator_cmd *cmd, char *ptr,
 		break;
 	case REQ_OP_DRV_IN:
 		req_name = "PRIVATE";
-		has_lba = 1;
+		has_lba = true;
 		break;
 	default:
 		req_name = "???";

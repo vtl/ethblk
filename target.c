@@ -1425,8 +1425,7 @@ out_err:
 	NET_STAT_INC(cmd->ini, cnt.err_count);
 	ETHBLK_HDR_SET_STATUS(rep_hdr, 1);
 	ethblk_target_send_reply(cmd);
-	if (cs_cmd)
-		kfree(cs_cmd);
+	kfree(cs_cmd);
 	return;
 out_drop:
 	NET_STAT_INC(cmd->ini, cnt.rx_dropped);

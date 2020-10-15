@@ -277,8 +277,7 @@ ethblk_worker_create_pool(struct ethblk_worker_pool **pool,
 	ret = 0;
 	goto out;
 err:
-	if (p->cb_cache)
-		kmem_cache_destroy(p->cb_cache);
+	kmem_cache_destroy(p->cb_cache);
 
 	ethblk_worker_destroy_pool(p);
 out:
