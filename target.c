@@ -785,20 +785,24 @@ static void ethblk_target_send_reply(struct ethblk_target_cmd *cmd);
 
 static void ethblk_target_cmd_free(struct ethblk_target_cmd *cmd)
 {
+	struct sk_buff *req_skb = cmd->req_skb;
+
 	dprintk(debug, "cmd %px\n", cmd);
 	if (!cmd)
 		return;
-	if (cmd->ini)
+	if (cmd->ini) {
+		if (cmd->ini->d)
+			ethblk_target_put_disk(cmd->ini->d);
 		ethblk_target_put_ini(cmd->ini);
-	if (cmd->d)
-		ethblk_target_put_disk(cmd->d);
+	}
 	if (cmd->bio)
 		bio_put(cmd->bio);
-	if (cmd->req_skb)
-		consume_skb(cmd->req_skb);
 	if (cmd->rep_skb)
 		consume_skb(cmd->rep_skb);
-	kmem_cache_free(ethblk_target_cmd_cache, cmd);
+	if (!cmd->in_headroom)
+		kmem_cache_free(ethblk_target_cmd_cache, cmd);
+	if (req_skb)
+		consume_skb(req_skb);
 }
 
 static void
@@ -863,26 +867,27 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	struct ethblk_cfg_hdr *rep_cfg_hdr;
 	struct sk_buff *rep_skb;
 	unsigned short drv_id;
+	struct ethblk_target_disk *d;
 	struct ethblk_target_disk_net_stat *stat;
 	int len = ETH_ZLEN + 512;
 
 	drv_id = be16_to_cpu(req_hdr->drv_id);
-	cmd->d = ethblk_target_find_disk(drv_id);
-	if (!cmd->d) {
+	d = ethblk_target_find_disk(drv_id);
+	if (!d) {
 		dprintk_ratelimit(err, "unknown drv_id %d\n", drv_id);
 		return;
 	}
-	dprintk(debug, "%s disk ID\n", cmd->d->name);
+	dprintk(debug, "%s disk ID\n", d->name);
 
-	stat = this_cpu_ptr(cmd->d->stat);
+	stat = this_cpu_ptr(d->stat);
 
 	cmd->ini =
-		ethblk_target_disk_initiator_find(cmd->d, req_hdr->src, req_skb->dev);
+		ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
 
 	if (!cmd->ini) {
 		dprintk_ratelimit(err,
 				  "initiator %s_%pM has no access to disk %s\n",
-				  req_skb->dev->name, req_hdr->src, cmd->d->name);
+				  req_skb->dev->name, req_hdr->src, d->name);
 		/* can't use NET_STAT_INC, it needs initiator */
 		stat->_cnt.rx_dropped++;
 		goto out;
@@ -910,7 +915,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 
 	rep_hdr->type = cpu_to_be16(eth_p_type);
 	ETHBLK_HDR_SET_FLAGS(rep_hdr, ETHBLK_PROTO_VERSION, 0, 1);
-	rep_hdr->drv_id = cpu_to_be16(cmd->d->drv_id);
+	rep_hdr->drv_id = cpu_to_be16(d->drv_id);
 	rep_hdr->tag = req_hdr->tag;
 	rep_hdr->op = req_hdr->op;
 	rep_hdr->lba = req_hdr->lba;
@@ -918,11 +923,11 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	rep_skb->dev = req_skb->dev;
 
 	rep_cfg_hdr = (struct ethblk_cfg_hdr *)(rep_hdr + 1);
-	rep_cfg_hdr->q_depth = cpu_to_be16(blk_queue_depth(cmd->d->bd->bd_queue));
+	rep_cfg_hdr->q_depth = cpu_to_be16(blk_queue_depth(d->bd->bd_queue));
 	rep_cfg_hdr->num_queues = cpu_to_be16(min(req_skb->dev->num_rx_queues, num_online_cpus()));
 	rep_cfg_hdr->num_sectors =
-		cpu_to_be64(i_size_read(cmd->d->bd->bd_inode) >> SECTOR_SHIFT);
-	uuid_copy((uuid_t *)rep_cfg_hdr->uuid, &cmd->d->uuid);
+		cpu_to_be64(i_size_read(d->bd->bd_inode) >> SECTOR_SHIFT);
+	uuid_copy((uuid_t *)rep_cfg_hdr->uuid, &d->uuid);
 
 	NET_STAT_INC(cmd->ini, cnt.rx_count);
 
@@ -962,7 +967,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	req_hdr = cmd->req_hdr;
 	drv_id = be16_to_cpu(req_hdr->drv_id);
 
-	cmd->d = d = ethblk_target_find_disk(drv_id);
+	d = ethblk_target_find_disk(drv_id);
 	if (!d) {
 		dprintk_ratelimit(err, "unknown drv_id %d\n", drv_id);
 		goto out;
@@ -1191,11 +1196,11 @@ static void ethblk_target_cmd_checksum_complete(struct bio *bio)
 	cs_cmd->work_type = ETHBLK_TARGET_CMD_WORK_TYPE_CHECKSUM;
 
 	dprintk(debug, "disk %s lba %llu sectors remaining %d\n",
-		cs_cmd->cmd->d->name, cs_cmd->lba, cs_cmd->sectors);
+		cs_cmd->cmd->ini->d->name, cs_cmd->lba, cs_cmd->sectors);
 
 	if (bio->bi_status != BLK_STS_OK) {
 		dprintk(err, "disk %s lba %llu sectors remaining %d bio status %d\n",
-			cs_cmd->cmd->d->name, cs_cmd->lba, cs_cmd->sectors, bio->bi_status);
+			cs_cmd->cmd->ini->d->name, cs_cmd->lba, cs_cmd->sectors, bio->bi_status);
 		goto error;
 	}
 
@@ -1263,11 +1268,11 @@ static struct bio *_bio_map_kern(struct request_queue *q, void *data,
 static void ethblk_target_checksum_cmd_iter(
 	struct ethblk_target_checksum_cmd *cs_cmd)
 {
-	struct ethblk_target_disk *d = cs_cmd->cmd->d;
+	struct ethblk_target_disk *d = cs_cmd->cmd->ini->d;
 	struct bio *bio;
 
 	dprintk(debug, "disk %s lba %llu sectors remaining %d\n",
-		cs_cmd->cmd->d->name, cs_cmd->lba, cs_cmd->sectors);
+		cs_cmd->cmd->ini->d->name, cs_cmd->lba, cs_cmd->sectors);
 
 	if (cs_cmd->sectors <= 0) {
 		int i;
@@ -1325,7 +1330,7 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 	req_hdr = cmd->req_hdr;
 	drv_id = be16_to_cpu(req_hdr->drv_id);
 
-	cmd->d = d = ethblk_target_find_disk(drv_id);
+	d = ethblk_target_find_disk(drv_id);
 	if (!d) {
 		dprintk_ratelimit(err, "unknown drv_id %d\n", drv_id);
 		goto out;
@@ -1458,15 +1463,24 @@ void ethblk_target_cmd(struct ethblk_target_cmd *cmd)
 void ethblk_target_cmd_deferred(struct sk_buff *skb)
 {
 	struct ethblk_target_cmd *cmd;
+	int headroom;
 
 	if (!target_running)
 		goto err;
-	cmd = kmem_cache_zalloc(ethblk_target_cmd_cache, GFP_ATOMIC);
-	if (!cmd) {
-		dprintk_ratelimit(debug, "can't allocate cmd\n");
-		goto err;
+
+	headroom = skb_headroom(skb);
+	if (headroom >= sizeof(struct ethblk_target_cmd)) {
+		cmd = (struct ethblk_target_cmd *)skb_push(skb, sizeof(struct ethblk_target_cmd));
+		memset(cmd, 0, sizeof(struct ethblk_target_cmd));
+		cmd->in_headroom = true;
+	} else {
+		cmd = kmem_cache_zalloc(ethblk_target_cmd_cache, GFP_ATOMIC);
+		if (!cmd) {
+			dprintk_ratelimit(debug, "can't allocate cmd\n");
+			goto err;
+		}
+		dprintk(debug, "alloc cmd %px\n", cmd);
 	}
-	dprintk(debug, "alloc cmd %px\n", cmd);
 	INIT_LIST_HEAD(&cmd->list);
 	cmd->req_skb = skb;
 	cmd->req_hdr = ethblk_network_skb_get_hdr(skb);
@@ -1479,7 +1493,8 @@ void ethblk_target_cmd_deferred(struct sk_buff *skb)
 	}
 	goto out;
 err_free_cmd:
-	kmem_cache_free(ethblk_target_cmd_cache, cmd);
+	if (!cmd->in_headroom)
+		kmem_cache_free(ethblk_target_cmd_cache, cmd);
 err:
 	consume_skb(skb);
 out:
@@ -1494,16 +1509,17 @@ static void ethblk_target_cmd_worker(struct kthread_work *work)
 	struct ethblk_target_cmd *cmd, *n;
 	bool queue_empty;
 	struct blk_plug plug;
+	unsigned long flags;
 
 	dprintk(debug, "worker[%d] on\n", w->idx);
 	for (;;) {
 		INIT_LIST_HEAD(&queue);
-		spin_lock_bh(&w->lock);
+		spin_lock_irqsave(&w->lock, flags);
 		list_splice_tail_init(&w->queue, &queue);
 		queue_empty = list_empty(&queue);
 		if (queue_empty)
 			w->active = false;
-		spin_unlock_bh(&w->lock);
+		spin_unlock_irqrestore(&w->lock, flags);
 
 		if (queue_empty)
 			break;
@@ -1518,6 +1534,8 @@ static void ethblk_target_cmd_worker(struct kthread_work *work)
 		blk_start_plug(&plug);
 		list_for_each_entry_safe (cmd, n, &queue, list) {
 			dprintk(debug, "cmd %px type %d\n", cmd, cmd->work_type);
+			if (cmd->in_headroom)
+				skb_pull(cmd->req_skb, sizeof(struct ethblk_target_cmd));
 			switch(cmd->work_type) {
 			case ETHBLK_TARGET_CMD_WORK_TYPE_SKB:
 				ethblk_target_cmd(cmd);
