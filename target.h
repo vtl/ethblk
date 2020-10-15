@@ -70,15 +70,15 @@ enum ethblk_target_cmd_work_type {
 
 struct ethblk_target_cmd {
 	struct list_head list;
-	enum ethblk_target_cmd_work_type work_type;
-	struct ethblk_target_disk *d;
+	enum ethblk_target_cmd_work_type work_type :2;
+	bool l3 :1;
+	bool in_headroom :1;
 	struct ethblk_target_disk_ini *ini;
 	struct bio *bio;
 	struct sk_buff *req_skb;
 	struct ethblk_hdr *req_hdr;
 	struct sk_buff *rep_skb;
-	bool l3;
-} __attribute__((aligned(64)));
+};
 
 struct ethblk_target_checksum_cmd {
 	struct list_head list;

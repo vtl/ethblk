@@ -1004,7 +1004,8 @@ ethblk_initiator_cmd_id(struct ethblk_initiator_cmd *cmd)
 
 	cmd->t = t; /* this is just for hdr_init */
 	cmd->l3 = t->l3;
-	skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
+
+	skb = ethblk_network_new_skb(ETH_ZLEN);
 
 	DEBUG_INI_CMD(debug, cmd, "skb = %px", skb);
 
@@ -2520,6 +2521,10 @@ out:
 static void ethblk_initiator_cmd(struct ethblk_worker_cb *cb)
 {
 	struct sk_buff *skb = (struct sk_buff *)cb->data;
+	bool in_headroom = cb->in_headroom;
+
+	if (in_headroom)
+		skb_pull(skb, sizeof(struct ethblk_worker_cb));
 
 	switch (cb->type) {
 	case ETHBLK_WORKER_CB_TYPE_INITIATOR_IO:
@@ -2533,7 +2538,8 @@ static void ethblk_initiator_cmd(struct ethblk_worker_cb *cb)
 		consume_skb(skb);
 		break;
 	}
-	kmem_cache_free(workers->cb_cache, cb);
+	if (!in_headroom)
+		kmem_cache_free(workers->cb_cache, cb);
 }
 
 static void ethblk_initiator_prepare_cfg_pkts(unsigned short drv_id,
@@ -2873,14 +2879,22 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
 				   int type)
 {
 	struct ethblk_worker_cb *cb = NULL;
+	int headroom;
 
 	if (!initiator_running)
 		goto err;
 
-	cb = kmem_cache_zalloc(workers->cb_cache, GFP_ATOMIC);
-	if (!cb) {
-		dprintk_ratelimit(debug, "can't allocate cb\n");
-		goto err;
+	headroom = skb_headroom(skb);
+
+	if (headroom >= sizeof(struct ethblk_worker_cb)) {
+		cb = (struct ethblk_worker_cb *)skb_push(skb, sizeof(struct ethblk_worker_cb));
+		cb->in_headroom = true;
+	} else {
+		cb = kmem_cache_zalloc(workers->cb_cache, GFP_ATOMIC);
+		if (!cb) {
+			dprintk_ratelimit(debug, "can't allocate cb\n");
+			goto err;
+		}
 	}
 	INIT_LIST_HEAD(&cb->list);
 	cb->fn = ethblk_initiator_cmd;
@@ -2893,7 +2907,7 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
 	}
 	goto out;
 err:
-	if (cb)
+	if (cb && !cb->in_headroom)
 		kmem_cache_free(workers->cb_cache, cb);
 	consume_skb(skb);
 out:
