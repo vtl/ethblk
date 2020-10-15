@@ -631,7 +631,7 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 		d->bd = NULL;
 		goto out_err;
 	}
-	q = d->bd->bd_queue;
+	q = d->bd->bd_disk->queue;
 
 	d->old_dma_alignment = q->dma_alignment;
 	if (q->dma_alignment != force_dma_alignment) {
@@ -669,7 +669,7 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	}
 
 	ret = bioset_init(&d->bs,
-			  blk_queue_depth(d->bd->bd_queue) * num_online_cpus(),
+			  blk_queue_depth(d->bd->bd_disk->queue) * num_online_cpus(),
 			  0, BIOSET_NEED_BVECS);
 	if (ret) {
 		dprintk(err, "disk %s can't init bioset: %d\n", d->name, ret);
@@ -715,7 +715,7 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 	kobject_del(&d->kobj);
 	xa_erase(&ethblk_target_disks, d->drv_id);
 
-	blk_queue_dma_alignment(d->bd->bd_queue, d->old_dma_alignment);
+	blk_queue_dma_alignment(d->bd->bd_disk->queue, d->old_dma_alignment);
 	blkdev_put(d->bd, FMODE_READ | FMODE_WRITE);
 
 	free_percpu(d->stat);
@@ -923,7 +923,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	rep_skb->dev = req_skb->dev;
 
 	rep_cfg_hdr = (struct ethblk_cfg_hdr *)(rep_hdr + 1);
-	rep_cfg_hdr->q_depth = cpu_to_be16(blk_queue_depth(d->bd->bd_queue));
+	rep_cfg_hdr->q_depth = cpu_to_be16(blk_queue_depth(d->bd->bd_disk->queue));
 	rep_cfg_hdr->num_queues = cpu_to_be16(min(req_skb->dev->num_rx_queues, num_online_cpus()));
 	rep_cfg_hdr->num_sectors =
 		cpu_to_be64(i_size_read(d->bd->bd_inode) >> SECTOR_SHIFT);
