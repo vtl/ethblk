@@ -1452,7 +1452,7 @@ ethblk_initiator_cmd_rw_partial_retry(struct ethblk_initiator_cmd *cmd)
 	if (old_t)
 		ethblk_initiator_put_tgt(old_t);
 
-	status = BLK_EH_RESET_TIMER;
+	status = BLK_STS_OK;
 	goto out;
 
 out_err:
@@ -1657,7 +1657,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 			tctx = &cmd->t->ctx[cmd->hctx_idx];
 			tctx->taint = min(tctx->taint + 1, 1000);
 		}
-		status = ethblk_initiator_cmd_rw_partial_retry(cmd);
+	        ethblk_initiator_cmd_rw_partial_retry(cmd);
 		goto out_unlock;
 	}
 
