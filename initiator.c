@@ -2646,8 +2646,8 @@ static void ethblk_initiator_tgt_free_deferred(struct work_struct *w)
 	ethblk_initiator_tgt_stat_free(t);
 	dev_put(t->nd);
 	percpu_ref_exit(&t->ref);
-	kzfree(t->ctx);
-	kzfree(t);
+	kfree(t->ctx);
+	kfree(t);
 }
 
 static void
