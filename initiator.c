@@ -800,7 +800,11 @@ static void ethblk_initiator_disk_set_capacity_work(struct work_struct *w)
 {
 	struct ethblk_initiator_disk *d =
 		container_of(w, struct ethblk_initiator_disk, cap_work);
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0)
+	struct block_device *bd = bdgrab(d->gd->part0);
+#else
 	struct block_device *bd = bdget_disk(d->gd, 0);
+#endif
 
 	if (bd) {
 		loff_t size = (loff_t)get_capacity(d->gd) << SECTOR_SHIFT;
