@@ -52,6 +52,7 @@ MODULE_PARM_DESC(queue_depth, "Initiator disk queue_depth (128 by default)");
 #define TAINT_SCORN (1 > (queue_depth / 4) ? 1 : (queue_depth / 4))
 #define TAINT_RELAX 10000
 
+static DEFINE_MUTEX(ethblk_initiator_disks_lock);
 static DEFINE_XARRAY(ethblk_initiator_disks);
 
 static struct ethblk_initiator_tgt *
@@ -1841,6 +1842,16 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 	if (!create)
 		goto out;
 
+	mutex_lock(&ethblk_initiator_disks_lock);
+	/* make sure it was not created while waiting for lock */
+	d = xa_load(&ethblk_initiator_disks, drv_id);
+	if (d) {
+		mutex_unlock(&ethblk_initiator_disks_lock);
+		ethblk_initiator_get_disk(d);
+		dprintk(debug, "found disk %px %s\n", d, d->name);
+		goto out;
+	}
+
 	dprintk(debug, "allocating new disk eda%d\n", drv_id);
 	d = kzalloc(sizeof(struct ethblk_initiator_disk), GFP_ATOMIC);
 	if (!d) {
@@ -1898,6 +1909,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 			ret);
 		goto out_err_kobj_tgts;
 	}
+	mutex_unlock(&ethblk_initiator_disks_lock);
 out:
 	return d;
 
@@ -1912,6 +1924,7 @@ out_err_kobj:
 out_err_disk:
 	kfree(d);
 out_err:
+	mutex_unlock(&ethblk_initiator_disks_lock);
 	return NULL;
 }
 
