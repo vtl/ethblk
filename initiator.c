@@ -2203,7 +2203,7 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 	cmd->ethblk_hdr.op = ETHBLK_OP_ID;
 	cmd->ethblk_hdr.lba = cpu_to_be64(t->id);
 
-	blk_execute_rq_nowait(d->queue, NULL, req, 0,
+	blk_execute_rq_nowait(d->gd, req, 0,
 			      ethblk_initiator_cmd_drv_in_done);
 }
 
@@ -2228,7 +2228,7 @@ static void ethblk_initiator_tgt_checksum(struct ethblk_initiator_tgt *t,
 	cmd->ethblk_hdr.lba = cpu_to_be64(lba);
 	cmd->ethblk_hdr.num_sectors = sectors;
 
-	blk_execute_rq_nowait(d->queue, NULL, req, 0,
+	blk_execute_rq_nowait(d->gd, req, 0,
 			      ethblk_initiator_cmd_drv_in_done);
 }
 
