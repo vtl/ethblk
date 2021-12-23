@@ -44,7 +44,7 @@ extern bool initiator_mode;
 	do {								\
 		int __pid, __cpu;					\
 		__pid = task_pid_nr(current);				\
-		__cpu = smp_processor_id();				\
+		__cpu = raw_smp_processor_id();				\
 		pr_##level(						\
 			"%s[%s pid:%d cpu:%d] " fmt,			\
 			__func__, current->comm, __pid, __cpu, ##arg);	\

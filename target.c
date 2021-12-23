@@ -29,13 +29,14 @@ static struct ethblk_worker_pool *workers;
 		if (i) {                                                       \
 			if (i->d->net_stat_enabled) {                          \
 				struct ethblk_target_disk_net_stat *dstat =    \
-					this_cpu_ptr(i->d->stat);              \
+					get_cpu_ptr(i->d->stat);               \
 				dstat->_##var += val;                          \
 				if (i->net_stat_enabled) {                     \
 					struct ethblk_target_disk_net_stat     \
 						*is = this_cpu_ptr(i->stat);   \
 					is->_##var += val;                     \
 				}                                              \
+				put_cpu_ptr(i->d->stat);		       \
 			}                                                      \
 		}                                                              \
 	} while (0)
@@ -879,7 +880,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 	}
 	dprintk(debug, "%s disk ID\n", d->name);
 
-	stat = this_cpu_ptr(d->stat);
+	stat = get_cpu_ptr(d->stat);
 
 	cmd->ini =
 		ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
@@ -892,6 +893,7 @@ static void ethblk_target_cmd_id(struct ethblk_target_cmd *cmd)
 		stat->_cnt.rx_dropped++;
 		goto out;
 	}
+	put_cpu_ptr(d->stat);
 
 	if (cmd->l3)
 		len += sizeof(struct iphdr) + sizeof(struct udphdr);
@@ -958,7 +960,6 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 	struct scatterlist sgl[16];
 	int sgn;
 	struct sk_buff *req_skb = cmd->req_skb;
-	struct ethblk_target_disk_net_stat *stat;
 	struct sk_buff *bio_skb;
 	int offset;
 	int i, ret;
@@ -972,8 +973,6 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 		dprintk_ratelimit(err, "unknown drv_id %d\n", drv_id);
 		goto out;
 	}
-
-	stat = this_cpu_ptr(d->stat);
 
 	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src, req_skb->dev);
 
@@ -1324,7 +1323,6 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 	unsigned short drv_id;
 	struct request_queue *q;
 	struct sk_buff *req_skb = cmd->req_skb;
-	struct ethblk_target_disk_net_stat *stat;
 	struct ethblk_target_checksum_cmd *cs_cmd;
 
 	req_hdr = cmd->req_hdr;
@@ -1335,8 +1333,6 @@ static void ethblk_target_cmd_checksum(struct ethblk_target_cmd *cmd)
 		dprintk_ratelimit(err, "unknown drv_id %d\n", drv_id);
 		goto out;
 	}
-
-	stat = this_cpu_ptr(d->stat);
 
 	cmd->ini = ethblk_target_disk_initiator_find(d, req_hdr->src,
 						     req_skb->dev);

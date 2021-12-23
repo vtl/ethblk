@@ -309,7 +309,7 @@ void ethblk_worker_destroy_pool(struct ethblk_worker_pool *p)
 
 bool ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
 {
-	int cpu_in = smp_processor_id();
+	int cpu_in = raw_smp_processor_id();
 	int cpu_out;
 	struct ethblk_worker *w;
 	bool ret = true;

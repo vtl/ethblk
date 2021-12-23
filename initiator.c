@@ -89,13 +89,14 @@ static inline void ethblk_initiator_put_disk(struct ethblk_initiator_disk *d)
 		if (t) {                                                       \
 			if (t->d->net_stat_enabled) {                          \
 				struct ethblk_initiator_net_stat *dstat =      \
-					this_cpu_ptr(t->d->stat);              \
+					get_cpu_ptr(t->d->stat);	       \
 				dstat->_##var += val;                          \
 				if (t->net_stat_enabled) {                     \
 					struct ethblk_initiator_net_stat *ts = \
 						this_cpu_ptr(t->stat);         \
 					ts->_##var += val;                     \
 				}                                              \
+				put_cpu_ptr(t->d->stat);		       \
 			}                                                      \
 		}                                                              \
 	} while (0)
@@ -184,7 +185,7 @@ ethblk_initiator_cmd_dump_to_string(struct ethblk_initiator_cmd *cmd, char *ptr,
 #define DEBUG_INI_CMD(level, cmd, fmt, arg...)                                 \
 	do {                                                                   \
 		int pid = task_pid_nr(current);                                \
-		int cpu = smp_processor_id();                                  \
+		int cpu = raw_smp_processor_id();                              \
 		char *__buf__##__line__ = &log_buf[cpu * LOG_ENTRY_SIZE];      \
 		char __attribute__((unused)) _debug, _err, _info;              \
 		if (&_##level == &_debug) {                                    \
@@ -428,7 +429,7 @@ static void ethblk_initiator_cmd_stat_account(struct ethblk_initiator_cmd *cmd)
 	if (!cmd->t->lat_stat_enabled)
 		return;
 
-	stat = this_cpu_ptr(cmd->t->stat);
+	stat = get_cpu_ptr(cmd->t->stat);
 	lat = cmd->time_completed - cmd->time_queued;
 
 	for (i = 0; i < stat->lat_hist_buckets; i++) {
@@ -438,6 +439,8 @@ static void ethblk_initiator_cmd_stat_account(struct ethblk_initiator_cmd *cmd)
 
 	if (i >= stat->lat_hist_buckets)
 		i = stat->lat_hist_buckets - 1;
+
+	put_cpu_ptr(cmd->t->stat);
 
 	switch (req_op(req)) {
 	case REQ_OP_READ:
@@ -492,6 +495,8 @@ ethblk_initiator_net_stat_dump(char *buf, int len,
 		 do_div(tmp, max(1ULL, NET_STAT_GET(stat, cnt.tx_count))),
 		 tmp));
 
+
+	// FIXME get rid of this_cpu_ptr
 	for (i = 0; i < this_cpu_ptr(stat)->lat_hist_buckets - 1; i++) {
 		ret += snprintf(buf + ret, PAGE_SIZE - ret,
 				"[%d] < %llu ns = r:%llu w:%llu\n", i,
@@ -930,7 +935,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		if (blk_rq_bytes(req) > cmd->t->max_payload)
 			port = (tctx->port++ >> 3) % cmd->t->num_queues;
 		else
-			port = smp_processor_id() % cmd->t->num_queues;
+			port = raw_smp_processor_id() % cmd->t->num_queues;
 
 		skb_put(skb, ETHBLK_HDR_L3_SIZE);
 		skb->protocol = htons(ETH_P_IP);
@@ -1518,7 +1523,7 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 			blk_rq_bytes(bd->rq), cmd->retries);
 	cmd->retries = 0;
 	cmd->time_queued = cmd->time_requeued = current_time = ktime_get_ns();
-	cmd->cpu_submitted = smp_processor_id();
+	cmd->cpu_submitted = raw_smp_processor_id();
 
 	blk_mq_start_request(bd->rq);
 
@@ -1818,7 +1823,9 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	set_capacity(gd, d->ssize);
 	snprintf(gd->disk_name, sizeof(gd->disk_name), "eda%d", d->drv_id);
 	dprintk(info, "disk %s %px, gd %p\n", d->name, d, gd);
-	add_disk(gd);
+	err = add_disk(gd);
+	if (err)
+		goto err_bio_set;
 	return 0;
 
 err_bio_set:
@@ -2206,7 +2213,7 @@ out:
 static void ethblk_initiator_cmd_drv_in_done(struct request *req,
 					     blk_status_t error)
 {
-	blk_put_request(req);
+	blk_mq_free_request(req);
 }
 
 static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
@@ -2929,7 +2936,7 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
 	cb->fn = ethblk_initiator_cmd;
 	cb->data = skb;
 	cb->type = type;
-	cb->comp_cpu = smp_processor_id();
+	cb->comp_cpu = raw_smp_processor_id();
 	if (!ethblk_worker_enqueue(workers, &cb->list)) {
 		dprintk_ratelimit(err, "can't enqueue work\n");
 		goto err;
