@@ -801,6 +801,13 @@ static void ethblk_initiator_disk_set_capacity_work(struct work_struct *w)
 {
 	struct ethblk_initiator_disk *d =
 		container_of(w, struct ethblk_initiator_disk, cap_work);
+
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 13, 0)
+	loff_t size = (loff_t)get_capacity(d->gd);
+	dprintk(info, "disk %s new size is %lld bytes\n", d->name,
+		size);
+	set_capacity_and_notify(d->gd, size);
+#else
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0)
 	struct block_device *bd = bdgrab(d->gd->part0);
 #else
@@ -816,6 +823,7 @@ static void ethblk_initiator_disk_set_capacity_work(struct work_struct *w)
 		inode_unlock(bd->bd_inode);
 		bdput(bd);
 	}
+#endif
 }
 
 static void ethblk_initiator_disk_free(struct percpu_ref *ref)
@@ -1662,7 +1670,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 			tctx = &cmd->t->ctx[cmd->hctx_idx];
 			tctx->taint = min(tctx->taint + 1, 1000);
 		}
-	        ethblk_initiator_cmd_rw_partial_retry(cmd);
+		ethblk_initiator_cmd_rw_partial_retry(cmd);
 		goto out_unlock;
 	}
 
@@ -1745,14 +1753,7 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 		err = -ENOMEM;
 		goto err_cmd;
 	}
-	gd = alloc_disk(ETHBLK_PARTITIONS);
-	if (gd == NULL) {
-		dprintk(err, "cannot allocate gendisk structure for %s\n",
-			d->name);
-		err = -ENOMEM;
-		goto err_cmd;
-	}
-	d->gd = gd;
+
 	memset(&d->tag_set, 0, sizeof(struct blk_mq_tag_set));
 	d->tag_set.ops = &ethblk_ops;
 	d->tag_set.nr_hw_queues = num_hw_queues;
@@ -1770,6 +1771,15 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 			d->name, err);
 		goto err_gd;
 	}
+	gd = blk_mq_alloc_disk(&d->tag_set, d);
+	if (gd == NULL) {
+		dprintk(err, "cannot allocate gendisk structure for %s\n",
+			d->name);
+		err = -ENOMEM;
+		goto err_cmd;
+	}
+	d->gd = gd;
+
 	q = blk_mq_init_queue(&d->tag_set);
 	if (IS_ERR_OR_NULL(q)) {
 		err = PTR_ERR(q);
@@ -1783,7 +1793,6 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	blk_queue_logical_block_size(q, SECTOR_SIZE);
 	blk_queue_physical_block_size(q, SECTOR_SIZE);
 	blk_queue_io_min(q, SECTOR_SIZE);
-	blk_queue_bounce_limit(q, BLK_BOUNCE_ANY);
 
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, q);
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, q);
@@ -1802,6 +1811,7 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	blk_queue_rq_timeout(q, CMD_RETRY_JIFFIES);
 
 	gd->major = disk_major;
+	gd->minors = 1;
 	gd->first_minor = first_minor;
 	gd->fops = &ethblk_bdops;
 	gd->private_data = d;
@@ -1812,11 +1822,11 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	return 0;
 
 err_bio_set:
+err_cmd:
 err_tag_set:
 	blk_mq_free_tag_set(&d->tag_set);
 err_gd:
 	put_disk(gd);
-err_cmd:
 	ethblk_initiator_disk_stat_free(d);
 	ethblk_initiator_free_minor(first_minor);
 	kfree(d->cmd);
@@ -2220,6 +2230,7 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 			      ethblk_initiator_cmd_drv_in_done);
 }
 
+#if 0
 static void ethblk_initiator_tgt_checksum(struct ethblk_initiator_tgt *t,
 					  u64 lba,
 					  int sectors)
@@ -2244,6 +2255,7 @@ static void ethblk_initiator_tgt_checksum(struct ethblk_initiator_tgt *t,
 	blk_execute_rq_nowait(d->gd, req, 0,
 			      ethblk_initiator_cmd_drv_in_done);
 }
+#endif
 
 void ethblk_initiator_discover_response(struct sk_buff *skb)
 {
@@ -2512,7 +2524,7 @@ void ethblk_initiator_cmd_response(struct sk_buff *skb, unsigned comp_cpu)
 		DEBUG_INI_CMD(debug, cmd,
 			      "target %s bad tag %d"
 			      "(got gen_id %d, expect %d"
-			      "- was request reused?)",
+			      " - was request reused?)",
 			      t->name, tag, gen_id, cmd_gen_id);
 		NET_STAT_INC(cmd->t, cnt.rx_late_count);
 		goto out_unlock;

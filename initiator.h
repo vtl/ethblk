@@ -140,7 +140,6 @@ struct ethblk_initiator_cmd {
 	unsigned cpu_submitted;
 	unsigned cpu_completed;
 	struct ethblk_hdr ethblk_hdr;
-	struct bio *bio;
 	int offset;
 	int skb_idx;
 	int nr_skbs;
