@@ -21,13 +21,6 @@
 #include <linux/version.h>
 #include <net/ip.h>
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 7, 0)
-#define SHA_DIGEST_WORDS    SHA1_DIGEST_WORDS
-#define SHA_WORKSPACE_WORDS SHA1_WORKSPACE_WORDS
-#define sha_init            sha1_init
-#define sha_transform       sha1_transform
-#endif
-
 #define VERSION "0.1"
 
 extern int net_stat;
@@ -64,7 +57,6 @@ extern bool initiator_mode;
 #define	ETHBLK_OP_DISCOVER 2
 #define	ETHBLK_OP_ID 3
 #define	ETHBLK_OP_CFG_CHANGE 4
-#define ETHBLK_OP_CHECKSUM 5
 
 #define ETHBLK_HDR_MASK_VERSION GENMASK(3, 0)
 #define ETHBLK_HDR_MASK_STATUS  GENMASK(6, 4)

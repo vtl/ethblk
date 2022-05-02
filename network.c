@@ -194,7 +194,6 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	case ETHBLK_OP_READ:
 	case ETHBLK_OP_WRITE:
 	case ETHBLK_OP_ID:
-	case ETHBLK_OP_CHECKSUM:
 		dprintk(debug, "iface %s skb %px L%d ETHBLK IO cmd\n", ifp->name, skb,
 			ethblk_network_skb_is_l2(skb) ? 2 : 3);
 		if (target_mode && !response) {

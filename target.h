@@ -65,7 +65,6 @@ struct ethblk_target_disk {
 enum ethblk_target_cmd_work_type {
 	ETHBLK_TARGET_CMD_WORK_TYPE_SKB,
 	ETHBLK_TARGET_CMD_WORK_TYPE_BIO,
-	ETHBLK_TARGET_CMD_WORK_TYPE_CHECKSUM,
 };
 
 struct ethblk_target_cmd {
@@ -78,21 +77,6 @@ struct ethblk_target_cmd {
 	struct sk_buff *req_skb;
 	struct ethblk_hdr *req_hdr;
 	struct sk_buff *rep_skb;
-};
-
-struct ethblk_target_checksum_cmd {
-	struct list_head list;
-	enum ethblk_target_cmd_work_type work_type;
-	struct ethblk_target_cmd *cmd;
-	struct ethblk_hdr *rep_hdr;
-	struct bio *bio;
-	__u64 lba;
-	int sectors;
-	__u32 sha_dg[SHA_DIGEST_WORDS];
-	__u32 sha_ws[SHA_WORKSPACE_WORDS];
-	void *data;
-	int order;
-	int data_len;
 };
 
 int ethblk_target_start(struct kobject *);
