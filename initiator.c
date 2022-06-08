@@ -1647,7 +1647,7 @@ static enum blk_eh_timer_return
 ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
-	enum blk_eh_timer_return status = BLK_EH_DONE;
+	enum blk_eh_timer_return status;
 	unsigned long current_time = ktime_get_ns();
 
 	spin_lock_bh(&cmd->lock);
@@ -1678,6 +1678,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 			tctx->taint = min(tctx->taint + 1, 1000);
 		}
 		ethblk_initiator_cmd_rw_partial_retry(cmd);
+		status = BLK_EH_RESET_TIMER;
 		goto out_unlock;
 	}
 
@@ -1686,6 +1687,7 @@ ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
 		cmd->id, cmd->hctx_idx, req, cmd->retries);
 	cmd->status = BLK_STS_TIMEOUT;
 	ethblk_initiator_blk_complete_request_locked(req);
+	status = BLK_EH_DONE;
 out_unlock:
 	spin_unlock_bh(&cmd->lock);
 	return status;
