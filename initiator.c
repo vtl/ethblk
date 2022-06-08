@@ -949,7 +949,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		/* NOTE to fool Mellanox packet steering we have to
 		 * use semi-random source/dest ports */
 		udp->source = htons(eth_p_type + port);
-		udp->dest = htons(eth_p_type);
+		udp->dest = htons(eth_p_type + port);
 	} else {
 		skb->protocol = htons(eth_p_type);
 	}
