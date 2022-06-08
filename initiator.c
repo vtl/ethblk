@@ -1191,6 +1191,8 @@ ethblk_initiator_cmd_rw_prepare_skb(struct ethblk_initiator_cmd *cmd,
 	skb = cmd->skbs[skb_idx];
 	if (skb) {
 		skb->truesize -= skb->data_len;
+// FIXME make sure there's no frags, or they'll leak
+		WARN_ON_ONCE(skb_shinfo(skb)->nr_frags);
 		skb_shinfo(skb)->nr_frags = skb->data_len = 0;
 		skb_trim(skb, 0);
 	} else {
