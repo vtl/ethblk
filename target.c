@@ -775,10 +775,11 @@ static struct kobj_attribute ethblk_target_disk_create_attr =
 static struct attribute *ethblk_sysfs_target_default_attrs[] = {
 	&ethblk_target_disk_create_attr.attr, NULL
 };
+ATTRIBUTE_GROUPS(ethblk_sysfs_target_default);
 
 static struct kobj_type ethblk_sysfs_target_ktype = {
 	.sysfs_ops = &kobj_sysfs_ops,
-	.default_attrs = ethblk_sysfs_target_default_attrs,
+	.default_groups = ethblk_sysfs_target_default_groups,
 };
 
 static void ethblk_target_cmd_rw_complete(struct bio *);
@@ -1050,7 +1051,11 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 		goto out_err;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
 	bio = bio_alloc_bioset(GFP_ATOMIC, sgn, &d->bs);
+#else
+	bio = bio_alloc_bioset(d->bd, sgn, write ? REQ_OP_WRITE : REQ_OP_READ, GFP_ATOMIC, &d->bs);
+#endif
 	if (!bio) {
 		dprintk_ratelimit(err, "disk %s can't alloc bio\n", d->name);
 		goto out_err;

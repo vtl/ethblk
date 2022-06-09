@@ -1343,7 +1343,11 @@ ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd)
 	cmd->nr_skbs = 0;
 	cmd->offset = 0;
 	if (blk_rq_bytes(req) > cmd->t->max_payload) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
 		bio = bio_clone_fast(req->bio, GFP_ATOMIC, &cmd->d->bio_set);
+#else
+		bio = bio_alloc_clone(cmd->d->gd->part0, req->bio, GFP_ATOMIC, &cmd->d->bio_set);
+#endif
 	} else {
 		bio = req->bio;
 		bio_get(bio);
@@ -1780,7 +1784,12 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 			d->name, err);
 		goto err_gd;
 	}
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
+	gd = alloc_disk(ETHBLK_PARTITIONS);
+#else
 	gd = blk_mq_alloc_disk(&d->tag_set, d);
+#endif
 	if (gd == NULL) {
 		dprintk(err, "cannot allocate gendisk structure for %s\n",
 			d->name);
@@ -1808,8 +1817,10 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	blk_queue_flag_set(QUEUE_FLAG_NOMERGES, q);
 	blk_queue_flag_set(QUEUE_FLAG_NOXMERGES, q);
 
-	q->nr_requests = d->tag_set.queue_depth;
-	d->queue = gd->queue = q;
+	d->queue = q;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
+	gd->queue = q;
+#endif
 
 	q->limits.max_dev_sectors = ETHBLK_INITIATOR_MAX_PAYLOAD / SECTOR_SIZE;
 	blk_queue_io_opt(q, PAGE_SIZE);
@@ -1826,10 +1837,16 @@ static int ethblk_initiator_create_gendisk(struct ethblk_initiator_disk *d)
 	gd->private_data = d;
 	set_capacity(gd, d->ssize);
 	snprintf(gd->disk_name, sizeof(gd->disk_name), "eda%d", d->drv_id);
-	dprintk(info, "disk %s %px, gd %p\n", d->name, d, gd);
+	dprintk(info, "disk %s %px, gd %px\n", d->name, d, gd);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+	add_disk(gd);
+	err = 0;
+#else
 	err = add_disk(gd);
+#endif
 	if (err)
 		goto err_bio_set;
+
 	return 0;
 
 err_bio_set:
@@ -2752,10 +2769,11 @@ static struct attribute *ethblk_sysfs_initiator_default_attrs[] = {
 	&ethblk_initiator_stats_attr.attr,
 	NULL
 };
+ATTRIBUTE_GROUPS(ethblk_sysfs_initiator_default);
 
 static struct kobj_type ethblk_sysfs_initiator_ktype = {
 	.sysfs_ops = &kobj_sysfs_ops,
-	.default_attrs = ethblk_sysfs_initiator_default_attrs,
+	.default_groups = ethblk_sysfs_initiator_default_groups,
 };
 
 static void ethblk_initiator_netdevice_unregister(struct net_device *nd)

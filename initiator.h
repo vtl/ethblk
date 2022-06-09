@@ -9,8 +9,11 @@
 #ifndef _ETHBLK_INITIATOR_H_
 #define _ETHBLK_INITIATOR_H_
 
+#include <linux/version.h>
 #include <linux/blk-mq.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
 #include <linux/genhd.h>
+#endif
 #include <scsi/sg.h>
 
 #include "ethblk.h"
