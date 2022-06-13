@@ -462,7 +462,6 @@ ethblk_initiator_net_stat_dump(char *buf, int len,
 			       struct ethblk_initiator_net_stat __percpu *stat)
 {
 	int i, ret = 0;
-	unsigned long long tmp;
 
 	ret = snprintf(buf, len,
 		       "rx-count %llu\ntx-count %llu\nrx-bytes %llu\n"
@@ -480,21 +479,21 @@ ethblk_initiator_net_stat_dump(char *buf, int len,
 		       NET_STAT_GET(stat, cnt.rxtx_same_cpu),
 		       NET_STAT_GET(stat, cnt.rxtx_other_cpu));
 
-	ret += snprintf(buf + ret, len - ret, "rlat-total %llu\n",
+	if (!lat_stat)
+		goto out;
+
+	ret += snprintf(buf + ret, len - ret, "rlat-ns-total %llu\n",
 			NET_STAT_GET(stat, lat.read));
-	ret += snprintf(buf + ret, len - ret, "wlat-total %llu\n",
+	ret += snprintf(buf + ret, len - ret, "wlat-ns-total %llu\n",
 			NET_STAT_GET(stat, lat.write));
 	ret += snprintf(
-		buf + ret, len - ret, "rlat-avg %llu\n",
-		(tmp = NET_STAT_GET(stat, lat.read),
-		 do_div(tmp, max(1ULL, NET_STAT_GET(stat, cnt.tx_count))),
-		 tmp));
+		buf + ret, len - ret, "rlat-ns-avg-per-sector %llu\n",
+		DIV_ROUND_UP(NET_STAT_GET(stat, lat.read),
+			     max(1ULL, NET_STAT_GET(stat, cnt.rx_bytes) >> SECTOR_SHIFT)));
 	ret += snprintf(
-		buf + ret, len - ret, "wlat-avg %llu\n",
-		(tmp = NET_STAT_GET(stat, lat.write),
-		 do_div(tmp, max(1ULL, NET_STAT_GET(stat, cnt.tx_count))),
-		 tmp));
-
+		buf + ret, len - ret, "wlat-ns-avg-per-sector %llu\n",
+		DIV_ROUND_UP(NET_STAT_GET(stat, lat.write),
+			     max(1ULL, NET_STAT_GET(stat, cnt.tx_bytes) >> SECTOR_SHIFT)));
 
 	// FIXME get rid of this_cpu_ptr
 	for (i = 0; i < this_cpu_ptr(stat)->lat_hist_buckets - 1; i++) {
@@ -509,6 +508,7 @@ ethblk_initiator_net_stat_dump(char *buf, int len,
 			NET_STAT_GET(stat, lat.hist_read[i]),
 			NET_STAT_GET(stat, lat.hist_write[i]));
 
+out:
 	return ret;
 }
 
