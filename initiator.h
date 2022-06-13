@@ -112,6 +112,7 @@ struct ethblk_initiator_disk {
 	spinlock_t target_lock;
 	int seq_id;
 	struct work_struct cap_work;
+	struct work_struct free_work;
 	struct percpu_ref ref;
 	struct completion destroy_completion;
 	int max_cmd;

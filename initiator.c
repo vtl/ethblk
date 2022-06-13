@@ -836,6 +836,14 @@ static void ethblk_initiator_disk_free(struct percpu_ref *ref)
 	struct ethblk_initiator_disk *d =
 		container_of(ref, struct ethblk_initiator_disk, ref);
 
+	schedule_work(&d->free_work);
+}
+
+static void ethblk_initiator_disk_free_work(struct work_struct *w)
+{
+	struct ethblk_initiator_disk *d =
+		container_of(w, struct ethblk_initiator_disk, free_work);
+
 	dprintk(info, "freeing disk %s %px\n", d->name, d);
 
 	ethblk_initiator_disk_remove_all_targets(d);
@@ -1917,6 +1925,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 		goto out_err_disk;
 	}
 	INIT_WORK(&d->cap_work, ethblk_initiator_disk_set_capacity_work);
+	INIT_WORK(&d->free_work, ethblk_initiator_disk_free_work);
 	init_completion(&d->destroy_completion);
 	ret = ethblk_initiator_create_gendisk(d);
 	if (ret) {
