@@ -1207,10 +1207,16 @@ ethblk_initiator_cmd_rw_prepare_skb(struct ethblk_initiator_cmd *cmd,
 		skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
 		if (!skb)
 			goto out;
-		cmd->skbs[skb_idx] = skb;
+		/*
+		 * Don't reuse skbs, turns out they are much slower
+		 * for writes than just allocating a fresh one.
+		 *
+		 * Also comment out the following skb_get()
+		 */
+		/* cmd->skbs[skb_idx] = skb; */
 	}
 
-	skb_get(skb);
+	/* skb_get(skb); */
 
 	eth = (struct ethhdr *)skb_mac_header(skb);
 	ip = (struct iphdr *)(eth + 1);
