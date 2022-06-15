@@ -1216,27 +1216,9 @@ ethblk_initiator_cmd_rw_prepare_skb(struct ethblk_initiator_cmd *cmd,
 	if (!bio)
 		goto out;
 
-	skb = cmd->skbs[skb_idx];
-	if (skb) {
-		skb->truesize -= skb->data_len;
-// FIXME make sure there's no frags, or they'll leak
-		WARN_ON_ONCE(skb_shinfo(skb)->nr_frags);
-		skb_shinfo(skb)->nr_frags = skb->data_len = 0;
-		skb_trim(skb, 0);
-	} else {
-		skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
-		if (!skb)
-			goto out;
-		/*
-		 * Don't reuse skbs, turns out they are much slower
-		 * for writes than just allocating a fresh one.
-		 *
-		 * Also comment out the following skb_get()
-		 */
-		/* cmd->skbs[skb_idx] = skb; */
-	}
-
-	/* skb_get(skb); */
+	skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
+	if (!skb)
+		goto out;
 
 	eth = (struct ethhdr *)skb_mac_header(skb);
 	ip = (struct iphdr *)(eth + 1);
@@ -1612,16 +1594,9 @@ static int ethblk_initiator_blk_init_request(struct blk_mq_tag_set *set,
 	if (!cmd->bios)
 		goto offsets;
 
-	cmd->skbs = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB, sizeof(*cmd->skbs),
-			    GFP_KERNEL);
-	if (!cmd->skbs)
-		goto bios;
-
 	ret = 0;
 	goto out;
-bios:
-	kfree(cmd->bios);
-	cmd->bios = NULL;
+
 offsets:
 	kfree(cmd->offsets);
 	cmd->offsets = NULL;
@@ -1639,12 +1614,9 @@ static void ethblk_initiator_blk_exit_request(struct blk_mq_tag_set *set,
 	for (i = 0; i < ETHBLK_INITIATOR_CMD_MAX_SKB; i++) {
 		if (cmd->bios[i])
 			bio_put(cmd->bios[i]);
-		if (cmd->skbs[i])
-			consume_skb(cmd->skbs[i]);
 	}
 	kfree(cmd->offsets);
 	kfree(cmd->bios);
-	kfree(cmd->skbs);
 }
 
 static void ethblk_initiator_blk_complete_request_locked(struct request *req)
