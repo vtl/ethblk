@@ -84,9 +84,7 @@ bool ethblk_network_skb_is_l3(struct sk_buff *skb)
 	struct udphdr *udp_hdr;
 
 	if (!pskb_may_pull(skb,
-			   + sizeof(struct ethhdr)
-			   + sizeof(struct iphdr)
-			   + sizeof(struct udphdr)
+			   + ETHBLK_HDR_L3_SIZE
 			   + sizeof(struct ethblk_hdr)
 			   - ETH_HLEN)) {
 		return false;
@@ -174,9 +172,11 @@ static int ethblk_network_recv(struct sk_buff *skb, struct net_device *ifp,
 	/* don't process in net/core/ipv4 */
 	old_skb->pkt_type = PACKET_OTHERHOST;
 
-	if (skb_linearize(skb)) {
-		dprintk_ratelimit(debug, "drop non-linearized skb %px\n", skb);
-		goto exit;
+	if (skb_headlen(skb) < ETHBLK_HDR_L3_SIZE) {
+		if (skb_linearize(skb)) {
+			dprintk_ratelimit(debug, "drop non-linearized skb %px\n", skb);
+			goto exit;
+		}
 	}
 
 	skb_push(skb, ETH_HLEN);
