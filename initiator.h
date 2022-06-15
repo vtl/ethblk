@@ -57,7 +57,9 @@ struct ethblk_initiator_disk_tgt_context {
 	int hctx_id;
 	int taint;
 	int relax_timeout;
+	int port_cpu_map_seed;
 	unsigned int port;
+	unsigned int port_cpu_map[NR_CPUS];
 } __attribute__((aligned(64)));
 
 struct ethblk_initiator_tgt {
@@ -141,6 +143,7 @@ struct ethblk_initiator_cmd {
 	unsigned long time_completed;
 	unsigned long gen_id; /* tag generation id */
 	bool l3;
+	unsigned port;
 	unsigned cpu_submitted;
 	unsigned cpu_completed;
 	struct ethblk_hdr ethblk_hdr;

@@ -406,6 +406,7 @@ err:
 static void ethblk_initiator_cmd_stat_account(struct ethblk_initiator_cmd *cmd)
 {
 	struct request *req = blk_mq_rq_from_pdu(cmd);
+	struct ethblk_initiator_disk_tgt_context *tctx;
 	struct ethblk_initiator_net_stat *stat;
 	unsigned long lat;
 	int i;
@@ -425,6 +426,11 @@ static void ethblk_initiator_cmd_stat_account(struct ethblk_initiator_cmd *cmd)
 		NET_STAT_INC(cmd->t, cnt.rxtx_same_cpu);
 	else
 		NET_STAT_INC(cmd->t, cnt.rxtx_other_cpu);
+
+	tctx= &cmd->t->ctx[cmd->hctx_idx];
+	tctx->port_cpu_map[cmd->cpu_completed] = cmd->port;
+
+	dprintk(debug, "cmd->port %d, cpu_submitted %d, cpu_completed %d, tctx %px\n", cmd->port, cmd->cpu_submitted, cmd->cpu_completed, tctx);
 
 	if (!cmd->t->lat_stat_enabled)
 		return;
@@ -935,15 +941,28 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct ethhdr *eth = (struct ethhdr *)skb_mac_header(skb);
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
-		struct request *req = blk_mq_rq_from_pdu(cmd);
 		struct ethblk_initiator_disk_tgt_context *tctx = &cmd->t->ctx[cmd->hctx_idx];
-		int port;
+		int port, ctx_port;
+		struct request *req = blk_mq_rq_from_pdu(cmd);
 
 		/* FIXME make tunable per-disk */
 		if (blk_rq_bytes(req) > cmd->t->max_payload)
-			port = (tctx->port++ >> 3) % cmd->t->num_queues;
-		else
-			port = raw_smp_processor_id() % cmd->t->num_queues;
+			port = (tctx->port++ >> 4) % cmd->t->num_queues;
+
+		port = raw_smp_processor_id();
+
+		if (tctx->port_cpu_map_seed > 0) {
+			ctx_port = tctx->port_cpu_map_seed % cmd->t->num_queues;
+			tctx->port_cpu_map_seed--;
+			dprintk(debug, "hctx_idx %d, seed port %d\n", cmd->hctx_idx, ctx_port);
+		} else {
+			ctx_port = tctx->port_cpu_map[port];
+		}
+
+		dprintk(debug, "cpu %d, port %d, ctx_port %d\n", raw_smp_processor_id(), port, ctx_port);
+
+		if (ctx_port > 0)
+			port = ctx_port;
 
 		skb_put(skb, ETHBLK_HDR_L3_SIZE);
 		skb->protocol = htons(ETH_P_IP);
@@ -958,6 +977,7 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		 * use semi-random source/dest ports */
 		udp->source = htons(eth_p_type + port);
 		udp->dest = htons(eth_p_type + port);
+		cmd->port = port;
 	} else {
 		skb->protocol = htons(eth_p_type);
 	}
@@ -2154,6 +2174,7 @@ ethblk_initiator_disk_add_target(struct ethblk_initiator_disk *d,
 	for (i = 0; i < num_hw_queues; i++) {
 		tn->ctx[i].taint = 0;
 		tn->ctx[i].relax_timeout = tn->relax_timeout_rearm;
+		tn->ctx[i].port_cpu_map_seed = num_online_cpus();
 	}
 
 	spin_lock_irqsave(&d->target_lock, flags);
