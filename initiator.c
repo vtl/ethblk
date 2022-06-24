@@ -2399,8 +2399,8 @@ static bool ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 		cmd->status = BLK_STS_IOERR;
 		goto out;
 	}
+
 	offset = cmd->offsets[skb_idx];
-	bio = cmd->bios[skb_idx];
 
 	switch (req_hdr->op) {
 	case ETHBLK_OP_READ:
@@ -2418,10 +2418,6 @@ static bool ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 		}
 		DEBUG_INI_CMD(debug, cmd, "skb_idx %d, offset %d, nr_skbs left %d", skb_idx, offset, cmd->nr_skbs);
 		ethblk_skb_copy_to_cmd(skb, cmd, offset);
-		if (bio) {
-			bio_put(bio);
-			cmd->bios[skb_idx] = NULL;
-		}
 		cmd->status = BLK_STS_OK;
 		break;
 	case ETHBLK_OP_WRITE:
@@ -2429,10 +2425,6 @@ static bool ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 		if (cmd->nr_skbs)
 			done = false;
 		DEBUG_INI_CMD(debug, cmd, "skb_idx %d, offset %d, nr_skbs left %d", skb_idx, offset, cmd->nr_skbs);
-		if (bio) {
-			bio_put(bio);
-			cmd->bios[skb_idx] = NULL;
-		}
 		cmd->status = BLK_STS_OK;
 		break;
 	case ETHBLK_OP_ID:
@@ -2447,6 +2439,12 @@ static bool ethblk_initiator_cmd_complete(struct ethblk_initiator_cmd *cmd,
 		dprintk(info, "%s: unknown op %d in reply\n",
 			cmd->d->name, rep_hdr->op);
 		break;
+	}
+
+	bio = cmd->bios[skb_idx];
+	if (bio) {
+		bio_put(bio);
+		cmd->bios[skb_idx] = NULL;
 	}
 
 out:
