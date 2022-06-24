@@ -993,7 +993,7 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 
 	write = (req_hdr->op == ETHBLK_OP_WRITE);
 	lba = be64_to_cpu(req_hdr->lba);
-	len = req_hdr->num_sectors << 9;
+	len = req_hdr->num_sectors << SECTOR_SHIFT;
 
 	rep_skb_alloc_len = sizeof(struct ethblk_hdr);
 
