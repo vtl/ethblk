@@ -1522,7 +1522,6 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(bd->rq);
 	blk_status_t status = BLK_STS_NOTSUPP;
-	unsigned long current_time;
 
 	if (!cmd->d->online) {
 		status = BLK_STS_NEXUS;
@@ -1544,7 +1543,7 @@ ethblk_initiator_blk_queue_request(struct blk_mq_hw_ctx *hctx,
 			(unsigned long long)blk_rq_pos(bd->rq),
 			blk_rq_bytes(bd->rq), cmd->retries);
 	cmd->retries = 0;
-	cmd->time_queued = cmd->time_requeued = current_time = ktime_get_ns();
+	cmd->time_queued = cmd->time_requeued = ktime_get_ns();
 	cmd->cpu_submitted = raw_smp_processor_id();
 
 	blk_mq_start_request(bd->rq);
