@@ -6,10 +6,13 @@
  *
  */
 
+#include <asm/topology.h>
+#include <linux/cacheinfo.h>
 #include <linux/hdreg.h>
 #include <linux/idr.h>
 #include <linux/init.h>
 #include <linux/kobject.h>
+#include <linux/kprobes.h>
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/xarray.h>
@@ -51,6 +54,8 @@ MODULE_PARM_DESC(queue_depth, "Initiator disk queue_depth (128 by default)");
 
 #define TAINT_SCORN (1 > (queue_depth / 4) ? 1 : (queue_depth / 4))
 #define TAINT_RELAX 10000
+
+static int ethblk_cpu_llc_sibling[NR_CPUS];
 
 static DEFINE_MUTEX(ethblk_initiator_disks_lock);
 static DEFINE_XARRAY(ethblk_initiator_disks);
@@ -942,27 +947,30 @@ ethblk_initiator_cmd_fill_skb_headers(struct ethblk_initiator_cmd *cmd,
 		struct iphdr *ip = (struct iphdr *)(eth + 1);
 		struct udphdr *udp = (struct udphdr *)(ip + 1);
 		struct ethblk_initiator_disk_tgt_context *tctx = &cmd->t->ctx[cmd->hctx_idx];
-		int port, ctx_port;
+		int cpu, sib, port, ctx_port;
 		struct request *req = blk_mq_rq_from_pdu(cmd);
-
 		/* FIXME make tunable per-disk */
 		if (blk_rq_bytes(req) > cmd->t->max_payload)
-			port = (tctx->port++ >> 4) % cmd->t->num_queues;
+			port = (tctx->port++ >> 3) % cmd->t->num_queues;
+		else {
+			cpu = raw_smp_processor_id();
 
-		port = raw_smp_processor_id();
+			if (tctx->port_cpu_map_seed > 0) {
+				ctx_port = tctx->port_cpu_map_seed % cmd->t->num_queues;
+				tctx->port_cpu_map_seed--;
+				dprintk(debug, "hctx_idx %d, seed port %d\n", cmd->hctx_idx, ctx_port);
+			} else {
+				sib = ethblk_cpu_llc_sibling[cpu];
+				ctx_port = tctx->port_cpu_map[sib];
+			}
 
-		if (tctx->port_cpu_map_seed > 0) {
-			ctx_port = tctx->port_cpu_map_seed % cmd->t->num_queues;
-			tctx->port_cpu_map_seed--;
-			dprintk(debug, "hctx_idx %d, seed port %d\n", cmd->hctx_idx, ctx_port);
-		} else {
-			ctx_port = tctx->port_cpu_map[port];
+			dprintk(debug, "cpu %d, port %d, ctx_port %d\n", raw_smp_processor_id(), port, ctx_port);
+
+			if (ctx_port > 0)
+				port = ctx_port;
+			else
+				port = cpu;
 		}
-
-		dprintk(debug, "cpu %d, port %d, ctx_port %d\n", raw_smp_processor_id(), port, ctx_port);
-
-		if (ctx_port > 0)
-			port = ctx_port;
 
 		skb_put(skb, ETHBLK_HDR_L3_SIZE);
 		skb->protocol = htons(ETH_P_IP);
@@ -2981,6 +2989,116 @@ static struct notifier_block ethblk_initiator_netdevice_notifier = {
 	.notifier_call = ethblk_initiator_netdevice_event
 };
 
+static struct cpu_cacheinfo *(*__get_cpu_cacheinfo)(unsigned int cpu) = NULL;
+static unsigned long (*__kallsyms_lookup_name)(const char *) = NULL;
+
+static inline int __get_cpu_cacheinfo_ref(int cpu, int level)
+{
+	struct cpu_cacheinfo *ci = __get_cpu_cacheinfo(cpu);
+	int i;
+
+	for (i = 0; i < ci->num_leaves; i++) {
+		if (ci->info_list[i].level == level) {
+			if (ci->info_list[i].attributes & CACHE_ID)
+				return i;
+			return -1;
+		}
+	}
+
+	return -1;
+}
+
+static void *ethblk_get_ksym_addr(char *sym)
+{
+	int err;
+	void *p;
+	struct kprobe kp = { .symbol_name = "kallsyms_lookup_name" };
+
+	err = register_kprobe(&kp);
+
+	if (err < 0) {
+		printk("kprobe failed\n");
+		return ERR_PTR(err);
+	}
+
+	__kallsyms_lookup_name = (void *)kp.addr;
+	unregister_kprobe(&kp);
+
+	if (!__kallsyms_lookup_name)
+		return ERR_PTR(-ENOENT);
+
+	p = (void *)__kallsyms_lookup_name(sym);
+
+	return p;
+}
+
+/*
+ * FIXME
+ * This is a pile of crap. Only verified to work on AMD EPYC 7302P
+ *
+ * +---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+ * | +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ |
+ * | |  0 16  | |  1 17  | |  2 18  | |  3 19  | |  4 20  | |  5 21  | |  6 22  | |  7 23  | |  8 24  | |  9 25  | | 10 26  | | 11 27  | | 12 28  | | 13 29  | | 14 30  | | 15 31  | |
+ * | +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ |
+ * | +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ |
+ * | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |  32 kB | |
+ * | +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ |
+ * | +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ |
+ * | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | | 512 kB | |
+ * | +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ +--------+ |
+ * | +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ |
+ * | |       16 MB       | |       16 MB       | |       16 MB       | |       16 MB       | |       16 MB       | |       16 MB       | |       16 MB       | |       16 MB       | |
+ * | +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ +-------------------+ |
+ * +---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+ */
+
+static void ethblk_initiator_cpu_llc_sibling_init(void)
+{
+	int cpu, sib;
+	cpumask_t *sib_mask;
+	cpumask_t llc_mask;
+	struct cpu_cacheinfo *ci;
+	int cache_id;
+
+	__get_cpu_cacheinfo = ethblk_get_ksym_addr("get_cpu_cacheinfo");
+
+	memset(ethblk_cpu_llc_sibling, 0, sizeof(ethblk_cpu_llc_sibling));
+
+	if (!__get_cpu_cacheinfo) {
+		dprintk(err, "can't find get_cpu_cacheinfo address\n");
+		return;
+	}
+
+	memset(ethblk_cpu_llc_sibling, -1, sizeof(ethblk_cpu_llc_sibling));
+
+	for (cpu = 0; cpu < num_online_cpus(); cpu++) {
+		sib_mask = topology_sibling_cpumask(cpu);
+		ci = __get_cpu_cacheinfo(cpu);
+		if (!ci->cpu_map_populated)
+			continue;
+		cache_id = __get_cpu_cacheinfo_ref(cpu, 3);
+		if (cache_id < 0)
+			continue;
+		dprintk(debug, "cpu %d, cache_ref = %d, size %d, shared_cpu_map 0x%lx\n",
+			cpu, cache_id, ci->info_list[cache_id].size,
+			*cpumask_bits(&ci->info_list[cache_id].shared_cpu_map));
+		cpumask_clear(&llc_mask);
+		cpumask_andnot(&llc_mask, &ci->info_list[cache_id].shared_cpu_map, sib_mask);
+		sib = cpumask_first(&llc_mask);
+		if (ethblk_cpu_llc_sibling[sib] >= 0 && ethblk_cpu_llc_sibling[sib] != cpu) {
+			dprintk(debug, "sibling[%d] is %d, looking for the next sib\n",
+				sib, ethblk_cpu_llc_sibling[sib]);
+			sib = cpumask_next(ethblk_cpu_llc_sibling[sib], &llc_mask);
+			if ((sib == cpu) ||
+			    (ethblk_cpu_llc_sibling[sib] >= 0 && ethblk_cpu_llc_sibling[sib] != cpu))
+				sib = cpumask_next(sib, &llc_mask);
+			dprintk(debug, "sibling[%d] is %d\n", sib, ethblk_cpu_llc_sibling[sib]);
+		}
+		dprintk(debug, "cpu %d, llc sib %d\n", cpu, sib);
+		ethblk_cpu_llc_sibling[cpu] = sib;
+	}
+}
+
 int __init ethblk_initiator_start(struct kobject *parent)
 {
 	int ret;
@@ -3021,6 +3139,9 @@ int __init ethblk_initiator_start(struct kobject *parent)
 		"using Ethernet packet type 0x%04x, disk major %d, "
 		"hw queues %d\n",
 		eth_p_type, disk_major, num_hw_queues);
+
+	ethblk_initiator_cpu_llc_sibling_init();
+
 	initiator_running = true;
 	dprintk(info, "initiator started\n");
 out:
