@@ -2944,12 +2944,12 @@ static void ethblk_initiator_cmd_worker(struct kthread_work *work)
 	dprintk(debug, "worker[%d] on\n", w->idx);
 	for (;;) {
 		INIT_LIST_HEAD(&queue);
-		spin_lock_bh(&w->lock);
+		raw_spin_lock_bh(&w->lock);
 		list_splice_tail_init(&w->queue, &queue);
 		queue_empty = list_empty(&queue);
 		if (queue_empty)
 			w->active = false;
-		spin_unlock_bh(&w->lock);
+		raw_spin_unlock_bh(&w->lock);
 
 		if (queue_empty)
 			break;

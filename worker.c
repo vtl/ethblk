@@ -257,7 +257,7 @@ ethblk_worker_create_pool(struct ethblk_worker_pool **pool,
 		w->idx = i;
 		w->pool = p;
 		INIT_LIST_HEAD(&w->queue);
-		spin_lock_init(&w->lock);
+		raw_spin_lock_init(&w->lock);
 		kthread_init_work(&w->work, fn);
 		w->worker = kthread_create_worker_on_cpu(i, 0, kthread_name, i);
 		if (IS_ERR(w->worker)) {
@@ -329,13 +329,13 @@ bool ethblk_worker_enqueue(struct ethblk_worker_pool *p, struct list_head *list)
 	s->in[cpu_in]++;
 	s->out[cpu_out]++;
 	dprintk(debug, "enqueue to worker[%d]\n", w->idx);
-	spin_lock_irqsave(&w->lock, flags);
+	raw_spin_lock_irqsave(&w->lock, flags);
 	empty = list_empty(&w->queue);
 	list_add_tail(list, &w->queue);
 	active = w->active;
 	if (!w->active)
 		w->active = true;
-	spin_unlock_irqrestore(&w->lock, flags);
+	raw_spin_unlock_irqrestore(&w->lock, flags);
 
 	if (!active)
 		ret = kthread_queue_work(w->worker, &w->work);

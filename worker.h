@@ -49,7 +49,7 @@ struct ethblk_worker {
 	struct kthread_worker *worker;
 	struct kthread_work work;
 	bool active;
-	spinlock_t lock;
+	raw_spinlock_t lock;
 	struct list_head queue;
 };
 
