@@ -283,7 +283,7 @@ struct sk_buff *ethblk_network_new_skb_with_payload(unsigned long hdr_len,
 	int err;
 
 	skb = alloc_skb_with_frags(hdr_len + MAX_HEADER, payload_len, 2, &err,
-				   GFP_ATOMIC);
+				   GFP_KERNEL);
 	if (skb) {
 		skb_reserve(skb, MAX_HEADER);
 		skb_reset_mac_header(skb);

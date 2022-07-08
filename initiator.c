@@ -1190,7 +1190,7 @@ ethblk_initiator_cmd_rw_split_bio(struct ethblk_initiator_cmd *cmd,
 
 	if (bio_size > skb_bytes) {
 		dprintk(debug, "bio %px size %d > %d, splitting\n", bio, bio_size, skb_bytes);
-		split = bio_split(bio, skb_bytes / SECTOR_SIZE, GFP_ATOMIC, &cmd->d->bio_set);
+		split = bio_split(bio, skb_bytes / SECTOR_SIZE, GFP_KERNEL, &cmd->d->bio_set);
 		if (!split) {
 			dprintk_ratelimit(err, "can't split bio\n");
 			goto out;
@@ -1281,8 +1281,9 @@ ethblk_initiator_cmd_rw_prepare_skb(struct ethblk_initiator_cmd *cmd,
 
 	ethblk_initiator_cmd_finalize_skb_headers(cmd, skb);
 
-	dprintk(debug, "cmd[%d] tag %u skb_idx %d offset %d\n",
-		cmd->id, hdr->tag, skb_idx, cmd->offsets[skb_idx]);
+	dprintk(debug, "cmd[%d] tag %u skb_idx %d offset %d lba %llu num_sectors %u\n",
+		cmd->id, hdr->tag, skb_idx, cmd->offsets[skb_idx],
+		be64_to_cpu(hdr->lba), hdr->num_sectors);
 out:
 	return skb;
 }
@@ -1368,9 +1369,9 @@ ethblk_initiator_cmd_rw(struct ethblk_initiator_cmd *cmd)
 	cmd->offset = 0;
 	if (blk_rq_bytes(req) > cmd->t->max_payload) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
-		bio = bio_clone_fast(req->bio, GFP_ATOMIC, &cmd->d->bio_set);
+		bio = bio_clone_fast(req->bio, GFP_KERNEL, &cmd->d->bio_set);
 #else
-		bio = bio_alloc_clone(cmd->d->gd->part0, req->bio, GFP_ATOMIC, &cmd->d->bio_set);
+		bio = bio_alloc_clone(cmd->d->gd->part0, req->bio, GFP_KERNEL, &cmd->d->bio_set);
 #endif
 	} else {
 		bio = req->bio;
@@ -1438,12 +1439,12 @@ ethblk_initiator_cmd_rw_partial_retry(struct ethblk_initiator_cmd *cmd)
 	}
 
 	cmd->offsets = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
-			       sizeof(*cmd->offsets), GFP_ATOMIC);
+			       sizeof(*cmd->offsets), GFP_KERNEL);
 	if (!cmd->offsets)
 		goto out_err;
 
 	cmd->bios = kcalloc(ETHBLK_INITIATOR_CMD_MAX_SKB,
-			    sizeof(*cmd->bios), GFP_ATOMIC);
+			    sizeof(*cmd->bios), GFP_KERNEL);
 	if (!cmd->bios)
 		goto out_err;
 
@@ -1904,7 +1905,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 	}
 
 	dprintk(debug, "allocating new disk eda%d\n", drv_id);
-	d = kzalloc(sizeof(struct ethblk_initiator_disk), GFP_ATOMIC);
+	d = kzalloc(sizeof(struct ethblk_initiator_disk), GFP_KERNEL);
 	if (!d) {
 		dprintk(err, "can't alloc new disk");
 		goto out_err;
@@ -1938,7 +1939,7 @@ ethblk_initiator_find_disk(unsigned short drv_id, bool create)
 		goto out_err_kobj;
 	}
 // FIXME check needed?
-	xa_store(&ethblk_initiator_disks, d->drv_id, d, GFP_ATOMIC);
+	xa_store(&ethblk_initiator_disks, d->drv_id, d, GFP_KERNEL);
 	ethblk_initiator_get_disk(d);
 
 	ret = sysfs_create_group(&d->kobj, &ethblk_initiator_disk_group);
@@ -2204,7 +2205,7 @@ static int ethblk_initiator_disk_remove_target(struct ethblk_initiator_tgt *t)
 
 	dprintk(info, "disk %s removing target %s\n", d->name, t->name);
 
-	tn = kzalloc(sizeof(struct ethblk_initiator_tgt_array), GFP_ATOMIC);
+	tn = kzalloc(sizeof(struct ethblk_initiator_tgt_array), GFP_KERNEL);
 	if (!tn) {
 		dprintk(err, "can't allocate memory for new targets array\n");
 		ret = -ENOMEM;
@@ -2364,8 +2365,8 @@ static int ethblk_skb_copy_to_cmd(struct sk_buff *skb,
 	char *to;
 
 	rq_for_each_segment (bv, req, iter) {
-		to = page_address(bv.bv_page) + bv.bv_offset;
 		if (off >= req_offset) {
+			to = page_address(bv.bv_page) + bv.bv_offset;
 			skb_copy_bits(skb, off, to, bv.bv_len);
 		}
 		off += bv.bv_len;
@@ -2917,7 +2918,7 @@ void ethblk_initiator_cmd_deferred(struct sk_buff *skb,
 		cb = (struct ethblk_worker_cb *)skb_push(skb, sizeof(struct ethblk_worker_cb));
 		cb->in_headroom = true;
 	} else {
-		cb = kmem_cache_zalloc(workers->cb_cache, GFP_ATOMIC);
+		cb = kmem_cache_zalloc(workers->cb_cache, GFP_KERNEL);
 		if (!cb) {
 			dprintk_ratelimit(debug, "can't allocate cb\n");
 			goto err;
