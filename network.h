@@ -26,6 +26,8 @@ struct sk_buff *ethblk_network_new_skb(ulong len);
 struct sk_buff *ethblk_network_new_skb_with_payload(unsigned long hdr_len,
 						    unsigned long payload_len);
 
+struct sk_buff *ethblk_network_new_skb_nd(struct net_device *nd, ulong len);
+
 int ethblk_network_route_l3(struct net_device *nd, __be32 daddr, __be32 saddr,
 			    unsigned char *mac);
 

@@ -1224,7 +1224,7 @@ ethblk_initiator_cmd_rw_prepare_skb(struct ethblk_initiator_cmd *cmd,
 	if (!bio)
 		goto out;
 
-	skb = ethblk_network_new_skb(ETHBLK_HDR_SIZE_FROM_CMD(cmd));
+	skb = ethblk_network_new_skb_nd(cmd->t->nd, ETHBLK_HDR_SIZE_FROM_CMD(cmd));
 	if (!skb)
 		goto out;
 

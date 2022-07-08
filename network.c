@@ -249,8 +249,23 @@ static struct packet_type ethblk_ip_pt __read_mostly = {
 struct sk_buff *ethblk_network_new_skb(unsigned long len)
 {
 	struct sk_buff *skb;
+	skb = alloc_skb(len + MAX_HEADER, GFP_KERNEL);
+	if (skb) {
+		skb_reserve(skb, MAX_HEADER);
+		skb_reset_mac_header(skb);
+		skb_reset_network_header(skb);
+		skb->protocol = htons(eth_p_type);
+		skb_checksum_none_assert(skb);
+	}
+	return skb;
+}
 
-	skb = alloc_skb(len + MAX_HEADER, GFP_ATOMIC);
+struct sk_buff *ethblk_network_new_skb_nd(struct net_device *nd,
+					  unsigned long len)
+{
+	struct sk_buff *skb;
+
+	skb = __netdev_alloc_skb(nd, len + MAX_HEADER, GFP_KERNEL);
 	if (skb) {
 		skb_reserve(skb, MAX_HEADER);
 		skb_reset_mac_header(skb);
