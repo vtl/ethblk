@@ -6,7 +6,6 @@
  *
  */
 
-#include <asm/topology.h>
 #include <linux/cacheinfo.h>
 #include <linux/hdreg.h>
 #include <linux/idr.h>
@@ -16,6 +15,11 @@
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/xarray.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+#include <asm/topology.h>
+#endif
+
 #include "ethblk.h"
 #include "initiator.h"
 #include "network.h"
@@ -2270,7 +2274,10 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 	cmd->ethblk_hdr.op = ETHBLK_OP_ID;
 	cmd->ethblk_hdr.lba = cpu_to_be64(t->id);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 18, 0)
+	req->end_io = ethblk_initiator_cmd_drv_in_done;
+	blk_execute_rq_nowait(req, 0);
+#elif LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
 	blk_execute_rq_nowait(req, 0, ethblk_initiator_cmd_drv_in_done);
 #else
 	blk_execute_rq_nowait(d->gd, req, 0, ethblk_initiator_cmd_drv_in_done);
