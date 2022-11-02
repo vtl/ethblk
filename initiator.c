@@ -868,7 +868,9 @@ static void ethblk_initiator_disk_free_work(struct work_struct *w)
 	flush_work(&d->cap_work);
 	ethblk_initiator_free_minor(d->gd->first_minor);
 	del_gendisk(d->gd);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	blk_cleanup_queue(d->queue);
+#endif
 	blk_mq_free_tag_set(&d->tag_set);
 	bioset_exit(&d->bio_set);
 	put_disk(d->gd);
@@ -1666,7 +1668,11 @@ static void ethblk_initiator_blk_complete_request(struct request *req)
 }
 
 static enum blk_eh_timer_return
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 ethblk_initiator_blk_request_timeout(struct request *req, bool reserved)
+#else
+ethblk_initiator_blk_request_timeout(struct request *req)
+#endif
 {
 	struct ethblk_initiator_cmd *cmd = blk_mq_rq_to_pdu(req);
 	enum blk_eh_timer_return status;
