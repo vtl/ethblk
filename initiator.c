@@ -2257,11 +2257,13 @@ out:
 	return ret;
 }
 
-static void ethblk_initiator_cmd_drv_in_done(struct request *req,
-					     blk_status_t error)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+static enum foid ethblk_initiator_cmd_drv_in_done(struct request *req,
+						  blk_status_t error)
 {
 	blk_mq_free_request(req);
 }
+#endif
 
 static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 {
@@ -2281,7 +2283,9 @@ static void ethblk_initiator_tgt_send_id(struct ethblk_initiator_tgt *t)
 	cmd->ethblk_hdr.lba = cpu_to_be64(t->id);
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5, 18, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	req->end_io = ethblk_initiator_cmd_drv_in_done;
+#endif
 	blk_execute_rq_nowait(req, 0);
 #elif LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
 	blk_execute_rq_nowait(req, 0, ethblk_initiator_cmd_drv_in_done);

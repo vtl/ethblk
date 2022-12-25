@@ -15,11 +15,6 @@
 #include "target.h"
 #include "worker.h"
 
-static int force_dma_alignment = 511;
-module_param(force_dma_alignment, int, 0644);
-MODULE_PARM_DESC(force_dma_alignment,
-		 "Force DMA alignment of backing store (511 by default)");
-
 static bool target_running = false;
 
 static struct ethblk_worker_pool *workers;
@@ -634,13 +629,6 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 	}
 	q = d->bd->bd_disk->queue;
 
-	d->old_dma_alignment = q->dma_alignment;
-	if (q->dma_alignment != force_dma_alignment) {
-		blk_queue_dma_alignment(q, force_dma_alignment);
-		dprintk(info, "disk %s backing store %s new dma alignment %d\n",
-			d->name, path, q->dma_alignment);
-	}
-
 	ret = kobject_init_and_add(&d->kobj, &ethblk_target_disk_kobj_type,
 				   &ethblk_sysfs_target_kobj, d->name);
 	if (ret) {
@@ -716,7 +704,6 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 	kobject_del(&d->kobj);
 	xa_erase(&ethblk_target_disks, d->drv_id);
 
-	blk_queue_dma_alignment(d->bd->bd_disk->queue, d->old_dma_alignment);
 	blkdev_put(d->bd, FMODE_READ | FMODE_WRITE);
 
 	free_percpu(d->stat);
