@@ -25,6 +25,10 @@
 #include "network.h"
 #include "worker.h"
 
+#ifndef BLK_STS_NEXUS
+#define BLK_STS_NEXUS	BLK_STS_RESV_CONFLICT
+#endif
+
 static bool initiator_running = false;
 static struct ethblk_worker_pool *workers;
 
@@ -886,15 +890,26 @@ static void ethblk_initiator_disk_free_work(struct work_struct *w)
 	dprintk(info, "disk %px eda%d freed\n", d, d->drv_id);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 static int ethblk_blk_open(struct block_device *bdev, fmode_t mode)
 {
 	struct ethblk_initiator_disk *d = bdev->bd_disk->private_data;
+#else
+static int ethblk_blk_open(struct gendisk *disk, blk_mode_t mode)
+{
+	struct ethblk_initiator_disk *d = disk->private_data;
+#endif
 	dprintk(debug, "disk %s opened by %s\n", d->name, current->comm);
 	ethblk_initiator_get_disk(d);
 	return 0;
 }
 
-static void ethblk_blk_release(struct gendisk *disk, fmode_t mode)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+#define FMODE_ARG	,fmode_t mode
+#else
+#define FMODE_ARG
+#endif
+static void ethblk_blk_release(struct gendisk *disk FMODE_ARG)
 {
 	struct ethblk_initiator_disk *d = disk->private_data;
 	dprintk(debug, "disk %s closed by %s\n", d->name, current->comm);
