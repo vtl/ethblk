@@ -620,7 +620,11 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 
 	snprintf(d->name, sizeof(d->name), "eda%d", drv_id);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	d->bd = blkdev_get_by_path(path, FMODE_READ | FMODE_WRITE, NULL);
+#else
+	d->bd = blkdev_get_by_path(path, FMODE_READ | FMODE_WRITE, NULL, NULL);
+#endif
 	if (IS_ERR(d->bd)) {
 		dprintk(err, "disk %s can't open backing store %s: %ld\n",
 			d->name, path, PTR_ERR(d->bd));
