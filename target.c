@@ -1077,8 +1077,13 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 
 	bio->bi_iter.bi_sector = lba;
 	bio_set_dev(bio, d->bd);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)
 	bio_set_op_attrs(bio, write ? REQ_OP_WRITE : REQ_OP_READ,
 			 (write ? REQ_SYNC | REQ_IDLE : 0));
+#else
+	bio->bi_opf = (write ? REQ_OP_WRITE : REQ_OP_READ) |
+			(write ? REQ_SYNC | REQ_IDLE : 0);
+#endif
 	bio->bi_end_io = ethblk_target_cmd_rw_complete;
 	bio->bi_private = cmd;
 	cmd->bio = bio;
