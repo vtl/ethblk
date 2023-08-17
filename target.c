@@ -53,8 +53,7 @@ static struct kmem_cache *ethblk_target_cmd_cache = NULL;
 static DEFINE_XARRAY(ethblk_target_disks);
 
 static void ethblk_target_initiator_free_deferred(struct work_struct *w);
-static void
-ethblk_target_disk_delete_initiator(struct ethblk_target_disk_ini *ini);
+static void ethblk_target_disk_delete_initiator(struct ethblk_target_disk_ini *ini);
 static void ethblk_target_disk_free_deferred(struct work_struct *w);
 static void ethblk_target_ini_free(struct percpu_ref *ref);
 
@@ -578,6 +577,12 @@ static struct kobj_type ethblk_target_disk_inis_kobj_type = {
 	.sysfs_ops = &kobj_sysfs_ops,
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+#define BLKDEV_PUT_MODE	, FMODE_READ | FMODE_WRITE
+#else
+#define BLKDEV_PUT_MODE	, NULL
+#endif
+
 static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 {
 	int ret = -EINVAL;
@@ -620,7 +625,11 @@ static int ethblk_target_disk_create(unsigned short drv_id, char *path)
 
 	snprintf(d->name, sizeof(d->name), "eda%d", drv_id);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	d->bd = blkdev_get_by_path(path, FMODE_READ | FMODE_WRITE, NULL);
+#else
+	d->bd = blkdev_get_by_path(path, FMODE_READ | FMODE_WRITE, NULL, NULL);
+#endif
 	if (IS_ERR(d->bd)) {
 		dprintk(err, "disk %s can't open backing store %s: %ld\n",
 			d->name, path, PTR_ERR(d->bd));
@@ -683,7 +692,7 @@ out_d_kobj:
 out_err:
 	free_percpu(d->stat);
 	if (d->bd)
-		blkdev_put(d->bd, FMODE_READ | FMODE_WRITE);
+		blkdev_put(d->bd BLKDEV_PUT_MODE);
 	kfree(d);
 	d = NULL;
 out:
@@ -704,7 +713,7 @@ static void ethblk_target_disk_free_deferred(struct work_struct *w)
 	kobject_del(&d->kobj);
 	xa_erase(&ethblk_target_disks, d->drv_id);
 
-	blkdev_put(d->bd, FMODE_READ | FMODE_WRITE);
+	blkdev_put(d->bd BLKDEV_PUT_MODE);
 
 	free_percpu(d->stat);
 	kfree(d->backend_path);
@@ -1077,8 +1086,13 @@ static void ethblk_target_cmd_rw(struct ethblk_target_cmd *cmd)
 
 	bio->bi_iter.bi_sector = lba;
 	bio_set_dev(bio, d->bd);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)
 	bio_set_op_attrs(bio, write ? REQ_OP_WRITE : REQ_OP_READ,
 			 (write ? REQ_SYNC | REQ_IDLE : 0));
+#else
+	bio->bi_opf = (write ? REQ_OP_WRITE : REQ_OP_READ) |
+			(write ? REQ_SYNC | REQ_IDLE : 0);
+#endif
 	bio->bi_end_io = ethblk_target_cmd_rw_complete;
 	bio->bi_private = cmd;
 	cmd->bio = bio;
